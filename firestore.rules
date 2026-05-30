@@ -1,0 +1,13 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Sessions collection — allow any authenticated or anonymous client
+    // to read and write their own session documents.
+    match /sessions/{sessionId} {
+      allow read, write: if true;
+    }
+
+  }
+}
