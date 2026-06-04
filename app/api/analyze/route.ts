@@ -17,6 +17,7 @@ import {
   createEmptyScores,
   profileToPrompt,
 } from "@/lib/preference-scorer"
+import { fetchCountryImages } from "@/lib/country-image-generator"
 
 // ─── Gemini-independent text summary ─────────────────────────────────────────
 
@@ -31,6 +32,19 @@ const generateSummary = (destinations: any[], language: string): string => {
     return `بناءً على تفضيلاتك، ${topDest.countryName} هي الوجهة المناسبة لك.`
   }
   return `Based on your preferences, ${topDest.countryName} is a perfect match for you.`
+}
+
+// ─── Per-destination card summary ────────────────────────────────────────────
+// Derives a short 1-line description from already-computed destination data.
+// No extra AI calls needed — runs purely from scoring output.
+
+function buildCardSummary(dest: DestinationMatch, dominantMood: string): string {
+  const acts = dest.activities.slice(0, 2).filter(s => s.length < 40)
+  if (acts.length >= 2) return `${acts[0]} · ${acts[1]}`
+  if (acts.length === 1 && dest.positives[0]) return `${acts[0]} · ${dest.positives[0]}`
+  if (dest.positives.length >= 2) return `${dest.positives[0]} · ${dest.positives[1]}`
+  if (dest.positives.length === 1) return dest.positives[0]
+  return `${dominantMood.charAt(0).toUpperCase() + dominantMood.slice(1)} destination with unforgettable experiences`
 }
 
 // ─── BLIP fallback (used only when GEMINI_API_KEY is absent) ─────────────────
@@ -333,27 +347,35 @@ export async function POST(request: NextRequest) {
       confidenceScore: Math.max(60, Math.min(95, dest.confidenceScore + index * 2)),
     }))
 
-    // ── Step 4: Enhanced details for the top destination ─────────────────────
+    // ── Step 4: Destination images + enhanced details (parallel) ────────────
     const topDestination = validatedDestinations[0]
-    let selectedDestinationDetails = null
+    const countryNames   = validatedDestinations.map(d => d.countryName)
 
-    if (topDestination) {
-      try {
-        selectedDestinationDetails = await getEnhancedDestinationDetails(
-          topDestination.countryCode,
-          profile,
-          userPreferences.budget || "medium",
-          userPreferences.travelDates
-        )
-      } catch (error) {
-        console.error("[analyze] Enhanced destination details error:", error)
-      }
-    }
+    const [destinationImages, selectedDestinationDetails] = await Promise.all([
+      // Fetch an Unsplash hero image for each of the 3 destinations
+      fetchCountryImages(countryNames).catch(e => {
+        console.error("[analyze] Destination image fetch error:", e)
+        return {} as Record<string, string>
+      }),
+      // City/holiday enrichment for the top destination
+      topDestination
+        ? getEnhancedDestinationDetails(
+            topDestination.countryCode,
+            profile,
+            userPreferences.budget || "medium",
+            userPreferences.travelDates
+          ).catch(e => { console.error("[analyze] Enhanced details error:", e); return null })
+        : Promise.resolve(null),
+    ])
+
+    console.log("[analyze] Images fetched:", Object.keys(destinationImages).join(", "))
 
     // ── Step 5: Build response ────────────────────────────────────────────────
     // geminiAnalysis is included so the client can save it to Firestore.
     const response = {
       requestSeed,
+      // Echo travelCompanion so the results page can read it from sessionStorage
+      travelCompanion,
       userProfile: {
         dominantMood:         profile.dominantMood,
         preferredClimate:     profile.preferredClimate,
@@ -366,35 +388,40 @@ export async function POST(request: NextRequest) {
       geminiProfileInsight,
       selectedDestinationDetails,
       countries: validatedDestinations.map((dest) => {
-        // Pick the single best-matching city for this destination based on user profile + budget
+        // Best-matching city for this destination (user profile + budget)
         const bestCity =
           getCityRecommendations(dest.countryCode, profile, matchContext.budget, 1)[0]?.city ??
           null
 
         return {
-        name: dest.countryName,
-        code: dest.countryCode,
-        city: bestCity,
-        matchPercentage: dest.confidenceScore,
-        reason: dest.positives[0] ?? `A great match for ${profile.dominantMood} travellers`,
-        vibe: profile.dominantMood.charAt(0).toUpperCase() + profile.dominantMood.slice(1),
-        confidenceBreakdown: {
-          activity: dest.scoreBreakdown.activityScore,
-          climate:  dest.scoreBreakdown.climateScore,
-          mood:     dest.scoreBreakdown.moodScore,
-          food:     dest.scoreBreakdown.foodScore,
-        },
-        positives:      dest.positives,
-        negatives:      dest.negatives,
-        climate:        dest.climate,
-        activities:     dest.activities,
-        foodHighlights: dest.foodHighlights,
-        cities: dest.cities ?? [],
-        hotels: dest.hotels.map((h) => ({
-          name:           h.name,
-          style:          h.style,
-          activity_level: h.activity_level,
-        })),
+          name: dest.countryName,
+          code: dest.countryCode,
+          city: bestCity,
+          matchPercentage: dest.confidenceScore,
+          reason: dest.positives[0] ?? `A great match for ${profile.dominantMood} travellers`,
+          // ── New multi-destination fields ──────────────────────────────────
+          image:        destinationImages[dest.countryName] ?? null,
+          tags:         profile.allTags,
+          shortSummary: buildCardSummary(dest, profile.dominantMood),
+          // ─────────────────────────────────────────────────────────────────
+          vibe: profile.dominantMood.charAt(0).toUpperCase() + profile.dominantMood.slice(1),
+          confidenceBreakdown: {
+            activity: dest.scoreBreakdown.activityScore,
+            climate:  dest.scoreBreakdown.climateScore,
+            mood:     dest.scoreBreakdown.moodScore,
+            food:     dest.scoreBreakdown.foodScore,
+          },
+          positives:      dest.positives,
+          negatives:      dest.negatives,
+          climate:        dest.climate,
+          activities:     dest.activities,
+          foodHighlights: dest.foodHighlights,
+          cities:         dest.cities ?? [],
+          hotels:         dest.hotels.map((h) => ({
+            name:           h.name,
+            style:          h.style,
+            activity_level: h.activity_level,
+          })),
         }
       }),
       summary: generateSummary(validatedDestinations, language),
