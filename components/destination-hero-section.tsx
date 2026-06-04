@@ -87,6 +87,7 @@ function getCitiesForCountry(name: string): string[] {
 
 export interface HeroCountry {
   name: string
+  city?: string        // single recommended city — when set, carousel shows only this city
   matchPercentage: number
   reason: string
   image: string
@@ -259,7 +260,10 @@ export function DestinationHeroSection({
   const activeIndex = Math.max(0, Math.min(selectedCountry, visible.length - 1))
   const active = visible[activeIndex]
 
-  const allCities = active ? getCitiesForCountry(active.name) : []
+  // Use the API-recommended city when available; otherwise fall back to the full country list
+  const allCities = active
+    ? (active.city ? [active.city] : getCitiesForCountry(active.name))
+    : []
   const maxStart = Math.max(0, allCities.length - WINDOW_SIZE)
 
   const [windowStart, setWindowStart] = useState(0)
@@ -303,7 +307,7 @@ export function DestinationHeroSection({
     setBgImage(active.image || FALLBACK)
     setCityImages(Array(9).fill(active.image || FALLBACK))
 
-    const cities = getCitiesForCountry(active.name)
+    const cities = active.city ? [active.city] : getCitiesForCountry(active.name)
     const queries = cities.map((c) => `${c} ${active.name}`)
 
     fetchCountryImages(queries).then((map) => {

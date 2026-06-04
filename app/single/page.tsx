@@ -10,7 +10,6 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DateRangePicker } from '@/components/date-range-picker';
-import { Badge } from '@/components/ui/badge';
 import { Loader2 } from 'lucide-react';
 import { ImageSelector } from '@/components/multiplayer/image-selector';
 import { SingleModeProvider, useSingleMode } from '@/contexts/single-mode-context';
@@ -67,15 +66,6 @@ function SingleModePageContent() {
     setShowDatePicker(false);
   };
 
-  const handleInterestToggle = (interest: string) => {
-    const interests = preferences.interests || [];
-    updatePreferences({
-      interests: interests.includes(interest)
-        ? interests.filter((i: string) => i !== interest)
-        : [...interests, interest],
-    });
-  };
-
   const handleCompanionSelect = (companion: "solo" | "couple" | "friends" | "family") => {
     updatePreferences({
       travelCompanion: preferences.travelCompanion === companion ? undefined : companion,
@@ -87,17 +77,6 @@ function SingleModePageContent() {
     { id: "couple" as const,  label: "Couple / Duo",  icon: Heart,  description: "Two travelers" },
     { id: "friends" as const, label: "Friends / Squad", icon: Users2, description: "Group of friends" },
     { id: "family" as const,  label: "Family",        icon: Users,  description: "Family trip" },
-  ];
-
-  const interests = [
-    'Adventure',
-    'Culture',
-    'Beaches',
-    'Mountains',
-    'Food',
-    'Shopping',
-    'Nightlife',
-    'Nature',
   ];
 
   const dateRangeDisplay = preferences.dateRange
@@ -366,31 +345,6 @@ function SingleModePageContent() {
                         </motion.button>
                       );
                     })}
-                  </div>
-                </motion.div>
-
-                {/* Interests */}
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.25 }}
-                >
-                  <label className="block text-sm font-semibold mb-3">Interests</label>
-                  <div className="flex flex-wrap gap-2">
-                    {interests.map((interest) => (
-                      <Badge
-                        key={interest}
-                        onClick={() => handleInterestToggle(interest)}
-                        variant={
-                          preferences.interests?.includes(interest)
-                            ? 'default'
-                            : 'outline'
-                        }
-                        className="cursor-pointer transition-all"
-                      >
-                        {interest}
-                      </Badge>
-                    ))}
                   </div>
                 </motion.div>
 

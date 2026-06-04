@@ -14,6 +14,7 @@ import {
   Landmark,
   Loader2,
   Check,
+  RefreshCw,
 } from 'lucide-react';
 import { useMultiplayer } from '@/contexts/multiplayer-context';
 import { useSingleMode } from '@/contexts/single-mode-context';
@@ -40,6 +41,17 @@ interface ImageSelectorProps {
   mode?: 'multiplayer' | 'single';
 }
 
+// Cycles of aspect-ratio classes to create a Pinterest-style varied height rhythm
+const ASPECT_CLASSES = [
+  'aspect-[4/3]',
+  'aspect-[3/4]',
+  'aspect-[16/9]',
+  'aspect-square',
+  'aspect-[4/5]',
+  'aspect-[3/2]',
+  'aspect-[2/3]',
+] as const
+
 export function ImageSelector({ mode = 'multiplayer' }: ImageSelectorProps) {
   const multiplayerContext = useMultiplayer();
   const singleModeContext = useSingleMode();
@@ -51,6 +63,7 @@ export function ImageSelector({ mode = 'multiplayer' }: ImageSelectorProps) {
 
   const [categoryImages, setCategoryImages] = useState<Record<string, ImageItem[]>>({});
   const [loadingCategories, setLoadingCategories] = useState<Record<string, boolean>>({});
+  const [categoryErrors, setCategoryErrors] = useState<Record<string, string>>({});
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
   const lastSyncedImagesRef = useRef<string[]>([]);
@@ -67,13 +80,30 @@ export function ImageSelector({ mode = 'multiplayer' }: ImageSelectorProps) {
   const generateCategoryImages = async (categoryId: string) => {
     if (loadingCategories[categoryId]) return;
     setLoadingCategories((prev) => ({ ...prev, [categoryId]: true }));
+    setCategoryErrors((prev) => ({ ...prev, [categoryId]: '' }));
 
     try {
-      const res = await fetch(`/api/image-templates?category=${categoryId}&count=10`);
-      if (!res.ok) throw new Error('Failed to fetch template images');
+      const res = await fetch(`/api/image-templates?category=${categoryId}&count=24`);
+
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try { const j = await res.json(); detail = j.error ?? detail; } catch {}
+        console.error(`[image-selector] API error for "${categoryId}": ${detail}`);
+        setCategoryErrors((prev) => ({ ...prev, [categoryId]: detail }));
+        return;
+      }
 
       const data = await res.json();
       const fetchedImages: any[] = data.images ?? [];
+
+      if (fetchedImages.length === 0) {
+        console.warn(`[image-selector] API returned 0 images for category "${categoryId}"`);
+        setCategoryErrors((prev) => ({
+          ...prev,
+          [categoryId]: 'No images returned. Check the server logs and your Unsplash key.',
+        }));
+        return;
+      }
 
       const newImages: ImageItem[] = fetchedImages.map((img: any) => ({
         url: img.imageUrl,
@@ -87,7 +117,9 @@ export function ImageSelector({ mode = 'multiplayer' }: ImageSelectorProps) {
 
       setCategoryImages((prev) => ({ ...prev, [categoryId]: newImages }));
     } catch (error) {
-      console.error('Error fetching template images:', error);
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`[image-selector] Fetch failed for "${categoryId}":`, msg);
+      setCategoryErrors((prev) => ({ ...prev, [categoryId]: `Network error: ${msg}` }));
     } finally {
       setLoadingCategories((prev) => ({ ...prev, [categoryId]: false }));
     }
@@ -170,7 +202,10 @@ export function ImageSelector({ mode = 'multiplayer' }: ImageSelectorProps) {
               whileTap={{ scale: 0.95 }}
               onClick={() => {
                 setActiveCategory(category.id);
-                generateCategoryImages(category.id);
+                // Auto-fetch only when no images exist yet; use Refresh to reload
+                if (!categoryImages[category.id]?.length) {
+                  generateCategoryImages(category.id);
+                }
               }}
               className={`relative group transition-all w-full min-w-0 ${
                 activeCategory === category.id ? 'ring-2 ring-primary' : ''
@@ -202,41 +237,73 @@ export function ImageSelector({ mode = 'multiplayer' }: ImageSelectorProps) {
             <h3 className="font-semibold">
               {categories.find((c) => c.id === activeCategory)?.name}
             </h3>
-            <Button size="sm" variant="ghost" onClick={() => setActiveCategory(null)}>
-              Close
-            </Button>
+            <div className="flex gap-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => generateCategoryImages(activeCategory)}
+                disabled={loadingCategories[activeCategory]}
+                title="Refresh images"
+              >
+                {loadingCategories[activeCategory] ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setActiveCategory(null)}>
+                Close
+              </Button>
+            </div>
           </div>
 
-          {loadingCategories[activeCategory] ? (
+          {loadingCategories[activeCategory] && !categoryImages[activeCategory]?.length ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 text-primary mx-auto mb-2 animate-spin" />
             </div>
+          ) : categoryErrors[activeCategory] ? (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive space-y-2">
+              <p className="font-semibold">Could not load images</p>
+              <p className="text-destructive/80">{categoryErrors[activeCategory]}</p>
+              <button
+                onClick={() => generateCategoryImages(activeCategory)}
+                className="text-xs underline hover:no-underline"
+              >
+                Try again
+              </button>
+            </div>
           ) : (
-            <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
+            <div className="columns-2 sm:columns-3 md:columns-4 gap-3">
               {(categoryImages[activeCategory] || []).map((image, idx) => (
-                <motion.button
-                  key={idx}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => toggleImageSelection(activeCategory, idx)}
-                  className={`relative group rounded-lg overflow-hidden border-2 ${
-                    image.selected
-                      ? 'border-primary ring-2 ring-primary'
-                      : 'border-border hover:border-primary/50'
-                  }`}
-                >
-                  <img
-                    src={image.url}
-                    alt={image.tags.vibe}
-                    className="h-32 w-full object-cover"
-                  />
-
-                  {image.selected && (
-                    <motion.div className="absolute inset-0 bg-primary/30 flex items-center justify-center">
-                      <Check className="h-6 w-6 text-white" />
-                    </motion.div>
-                  )}
-                </motion.button>
+                <div key={idx} className="break-inside-avoid mb-3">
+                  <button
+                    onClick={() => toggleImageSelection(activeCategory, idx)}
+                    className={`relative w-full group rounded-xl overflow-hidden border-2 transition-all duration-200 block ${
+                      image.selected
+                        ? 'border-primary ring-2 ring-primary shadow-lg shadow-primary/20'
+                        : 'border-transparent hover:border-primary/40'
+                    }`}
+                  >
+                    <img
+                      src={image.url}
+                      alt={image.tags.vibe}
+                      className={`w-full object-cover block ${ASPECT_CLASSES[idx % ASPECT_CLASSES.length]}`}
+                      loading="lazy"
+                    />
+                    <div
+                      className={`absolute inset-0 transition-all duration-200 ${
+                        image.selected
+                          ? 'bg-primary/25'
+                          : 'bg-transparent group-hover:bg-black/10'
+                      }`}
+                    />
+                    {image.selected && (
+                      <div className="absolute top-2 right-2 h-6 w-6 bg-primary rounded-full flex items-center justify-center shadow-md">
+                        <Check className="h-3.5 w-3.5 text-white" />
+                      </div>
+                    )}
+                  </button>
+                </div>
               ))}
             </div>
           )}

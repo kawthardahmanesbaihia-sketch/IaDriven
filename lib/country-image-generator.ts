@@ -70,10 +70,10 @@ export async function fetchCountryImage(countryName: string): Promise<string> {
   }
 
   try {
-    const accessKey = process.env.NEXT_PUBLIC_UNSPLASH_KEY;
-    
+    const accessKey = process.env.UNSPLASH_ACCESS_KEY;
+
     if (!accessKey) {
-      console.warn('NEXT_PUBLIC_UNSPLASH_KEY not found, using fallback image');
+      console.warn('[country-image-generator] UNSPLASH_ACCESS_KEY not set, using fallback image');
       return getFallbackImage(countryName);
     }
 

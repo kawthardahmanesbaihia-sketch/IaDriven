@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { analyzePreferences, createPreferenceProfile } from "@/lib/preferences-analyzer"
-import { getTopDestinations, type DestinationMatch } from "@/lib/destination-matcher"
+import { getTopDestinations, getCityRecommendations, type DestinationMatch } from "@/lib/destination-matcher"
 import { ImageMetadata } from "@/lib/image-generator"
 import { generateSeed, shuffleArrayWithSeed } from "@/lib/seed-randomizer"
 import { getEnhancedDestinationDetails } from "@/lib/destination-enhancer"
@@ -365,9 +365,16 @@ export async function POST(request: NextRequest) {
       geminiAnalysis: geminiResults,
       geminiProfileInsight,
       selectedDestinationDetails,
-      countries: validatedDestinations.map((dest) => ({
+      countries: validatedDestinations.map((dest) => {
+        // Pick the single best-matching city for this destination based on user profile + budget
+        const bestCity =
+          getCityRecommendations(dest.countryCode, profile, matchContext.budget, 1)[0]?.city ??
+          null
+
+        return {
         name: dest.countryName,
         code: dest.countryCode,
+        city: bestCity,
         matchPercentage: dest.confidenceScore,
         reason: dest.positives[0] ?? `A great match for ${profile.dominantMood} travellers`,
         vibe: profile.dominantMood.charAt(0).toUpperCase() + profile.dominantMood.slice(1),
@@ -388,7 +395,8 @@ export async function POST(request: NextRequest) {
           style:          h.style,
           activity_level: h.activity_level,
         })),
-      })),
+        }
+      }),
       summary: generateSummary(validatedDestinations, language),
     }
 

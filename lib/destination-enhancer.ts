@@ -421,31 +421,26 @@ export function filterHolidaysByDateRange(holidays: Holiday[], startDate: string
 }
 
 // Main function to get enhanced destination details
+// Hotels and restaurants are intentionally empty here — real data comes from
+// /api/destination which calls HotelBeds and Google Places.
+// Only city suggestion and public holidays are returned from this function.
 export async function getEnhancedDestinationDetails(
   countryCode: string,
   profile: any,
   budget: string,
   travelDates?: { start: string; end: string }
 ): Promise<EnhancedDestinationDetails> {
-  // Get city suggestion
-  const city = getBestCity(countryCode, profile, budget);
+  const city = getBestCity(countryCode, profile, budget)
 
-  // Get hotels and restaurants for the city
-  const hotels = getHotelsForBudget(city.cityName, budget);
-  const restaurants = getRestaurantsForBudget(city.cityName, budget);
-
-  // Get holidays if travel dates are provided
-  let events: Holiday[] = [];
+  // Public holidays from the free Nager.Date API (no API key required)
+  let events: Holiday[] = []
   if (travelDates?.start && travelDates?.end) {
-    const year = new Date(travelDates.start).getFullYear();
-    const allHolidays = await getHolidaysForCountry(countryCode, year);
-    events = filterHolidaysByDateRange(allHolidays, travelDates.start, travelDates.end);
+    const year = new Date(travelDates.start).getFullYear()
+    const allHolidays = await getHolidaysForCountry(countryCode, year)
+    events = filterHolidaysByDateRange(allHolidays, travelDates.start, travelDates.end)
   }
 
-  return {
-    city,
-    hotels,
-    restaurants,
-    events
-  };
+  // Return empty arrays — never return "City Center Hotel" or "Budget Inn" etc.
+  // The destination guide page calls /api/destination for real hotel/restaurant data.
+  return { city, hotels: [], restaurants: [], events }
 }

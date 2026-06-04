@@ -1,6 +1,15 @@
 /**
- * Dynamic Data Generator
- * Generates unique, destination-specific content without relying on static fallbacks
+ * Dynamic Data Generator — DEPRECATED
+ *
+ * generateDynamicHotels, generateDynamicRestaurants, and generateDynamicActivities
+ * have been removed.  Real data now comes from:
+ *   hotels      → lib/hotelbeds-client.ts  (HotelBeds Content API)
+ *   restaurants → lib/google-places.ts     (Google Places Text Search)
+ *   activities  → lib/hotelbeds-client.ts  (HotelBeds Activities API)
+ *              + lib/gemini-client.ts       (Gemini fallback)
+ *
+ * All exports below return empty arrays to avoid surfacing generated placeholder
+ * data.  This file can be deleted once all import sites are cleaned up.
  */
 
 export interface DynamicHotel {
@@ -148,12 +157,16 @@ const COUNTRY_DATA: Record<string, {
   },
 }
 
+/** @deprecated Returns [] — use lib/hotelbeds-client.ts */
 export function generateDynamicHotels(
-  countryName: string,
-  seed: number,
-  count: number = 3
+  _countryName: string,
+  _seed: number,
+  _count: number = 3
 ): DynamicHotel[] {
-  const countryData = COUNTRY_DATA[countryName]
+  console.warn("[dynamic-data-generator] generateDynamicHotels removed — use lib/hotelbeds-client.ts")
+  return []
+  // eslint-disable-next-line no-unreachable
+  const countryData = COUNTRY_DATA[_countryName]
   if (!countryData) return []
 
   const hotels: DynamicHotel[] = []
@@ -187,12 +200,16 @@ export function generateDynamicHotels(
   return hotels
 }
 
+/** @deprecated Returns [] — use lib/google-places.ts */
 export function generateDynamicRestaurants(
-  countryName: string,
-  seed: number,
-  count: number = 3
+  _countryName: string,
+  _seed: number,
+  _count: number = 3
 ): DynamicRestaurant[] {
-  const countryData = COUNTRY_DATA[countryName]
+  console.warn("[dynamic-data-generator] generateDynamicRestaurants removed — use lib/google-places.ts")
+  return []
+  // eslint-disable-next-line no-unreachable
+  const countryData = COUNTRY_DATA[_countryName]
   if (!countryData) return []
 
   const restaurants: DynamicRestaurant[] = []
@@ -222,12 +239,16 @@ export function generateDynamicRestaurants(
   return restaurants
 }
 
+/** @deprecated Returns [] — use lib/hotelbeds-client.ts or lib/gemini-client.ts */
 export function generateDynamicActivities(
-  countryName: string,
-  seed: number,
-  count: number = 3
+  _countryName: string,
+  _seed: number,
+  _count: number = 3
 ): DynamicActivity[] {
-  const countryData = COUNTRY_DATA[countryName]
+  console.warn("[dynamic-data-generator] generateDynamicActivities removed — use lib/hotelbeds-client.ts")
+  return []
+  // eslint-disable-next-line no-unreachable
+  const countryData = COUNTRY_DATA[_countryName]
   if (!countryData) return []
 
   const activities: DynamicActivity[] = []

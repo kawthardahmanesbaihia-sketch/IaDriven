@@ -8,469 +8,182 @@ export interface CategoryQueryEntry {
 
 /**
  * Per-category pools of Unsplash search queries.
- * Each entry carries the metadata tags that will be attached to images
- * returned by that query. The route tries queries in order until it
- * has collected `count` unique images.
+ * Each pool contains 25 visually-distinct subcategory styles so that
+ * shuffled requests produce a diverse, Pinterest-style feed.
  */
 export const CATEGORY_QUERY_POOLS: Record<string, CategoryQueryEntry[]> = {
-  // ── NATURE ──────────────────────────────────────────────────────────────────
+  // ── NATURE ───────────────────────────────────────────────────────────────────
   nature: [
-    {
-      id: "nature_landscape",
-      query: "nature landscape travel scenic wilderness",
-      tags: { budget: "budget", travelers: "solo", interests: ["nature", "hiking"], tripStyle: "adventure", climate: "temperate", foodStyle: "local", environment: "nature", vibe: "adventurous" },
-    },
-    {
-      id: "nature_mountain",
-      query: "mountain peak alpine hiking trail",
-      tags: { budget: "mid-range", travelers: "solo", interests: ["hiking", "mountains", "photography"], tripStyle: "adventure", climate: "cold", foodStyle: "local", environment: "mountain", vibe: "adventurous" },
-    },
-    {
-      id: "nature_waterfall",
-      query: "waterfall jungle rainforest tropical green",
-      tags: { budget: "budget", travelers: "friends", interests: ["nature", "swimming", "photography"], tripStyle: "adventure", climate: "tropical", foodStyle: "local", environment: "nature", vibe: "adventurous" },
-    },
-    {
-      id: "nature_countryside",
-      query: "countryside rural road scenic peaceful valley",
-      tags: { budget: "budget", travelers: "couple", interests: ["scenery", "road-trip", "relaxation"], tripStyle: "relaxed", climate: "temperate", foodStyle: "local", environment: "countryside", vibe: "peaceful" },
-    },
-    {
-      id: "nature_forest",
-      query: "forest trees trail morning sunlight peaceful",
-      tags: { budget: "budget", travelers: "solo", interests: ["nature", "wellness", "hiking"], tripStyle: "wellness", climate: "temperate", foodStyle: "local", environment: "nature", vibe: "peaceful" },
-    },
-    {
-      id: "nature_northern_lights",
-      query: "northern lights aurora borealis winter night sky",
-      tags: { budget: "mid-range", travelers: "couple", interests: ["nature", "photography"], tripStyle: "relaxed", climate: "cold", foodStyle: "local", environment: "nature", vibe: "romantic" },
-    },
-    {
-      id: "nature_desert",
-      query: "desert dunes sand landscape dramatic sunset",
-      tags: { budget: "mid-range", travelers: "couple", interests: ["nature", "photography", "culture"], tripStyle: "adventure", climate: "desert", foodStyle: "local", environment: "desert", vibe: "adventurous" },
-    },
+    { id: "nature_snowy_peaks",      query: "snowy mountain peaks winter alpine dramatic",          tags: { budget: "mid-range", travelers: "solo",    interests: ["mountains", "hiking"],         tripStyle: "adventure", climate: "cold",          foodStyle: "local",       environment: "mountain",     vibe: "adventurous" } },
+    { id: "nature_desert_dunes",     query: "desert sand dunes golden light sunset warm",           tags: { budget: "mid-range", travelers: "couple",   interests: ["desert", "photography"],       tripStyle: "adventure", climate: "desert",        foodStyle: "local",       environment: "desert",       vibe: "adventurous" } },
+    { id: "nature_waterfall_jungle", query: "tropical waterfall lush jungle green mist",            tags: { budget: "budget",    travelers: "friends",  interests: ["nature", "swimming"],          tripStyle: "adventure", climate: "tropical",      foodStyle: "local",       environment: "nature",       vibe: "adventurous" } },
+    { id: "nature_aurora",           query: "aurora borealis northern lights purple green night",   tags: { budget: "mid-range", travelers: "couple",   interests: ["photography", "nature"],       tripStyle: "relaxed",   climate: "cold",          foodStyle: "local",       environment: "nature",       vibe: "romantic"    } },
+    { id: "nature_alpine_lake",      query: "alpine lake mirror reflection mountains crystal",      tags: { budget: "mid-range", travelers: "couple",   interests: ["scenery", "hiking"],           tripStyle: "relaxed",   climate: "temperate",     foodStyle: "local",       environment: "mountain",     vibe: "peaceful"    } },
+    { id: "nature_autumn_forest",    query: "autumn fall foliage golden red forest trail",          tags: { budget: "budget",    travelers: "solo",     interests: ["hiking", "photography"],       tripStyle: "relaxed",   climate: "temperate",     foodStyle: "local",       environment: "nature",       vibe: "peaceful"    } },
+    { id: "nature_volcano",          query: "active volcano eruption lava dramatic landscape",      tags: { budget: "mid-range", travelers: "solo",     interests: ["geology", "photography"],      tripStyle: "adventure", climate: "tropical",      foodStyle: "local",       environment: "nature",       vibe: "adventurous" } },
+    { id: "nature_fjord",            query: "Norwegian fjord dramatic cliff green water",           tags: { budget: "luxury",    travelers: "couple",   interests: ["scenery", "cruising"],         tripStyle: "relaxed",   climate: "cold",          foodStyle: "local",       environment: "nature",       vibe: "adventurous" } },
+    { id: "nature_lavender",         query: "lavender field purple Provence rolling hills",         tags: { budget: "mid-range", travelers: "couple",   interests: ["photography", "relaxation"],   tripStyle: "relaxed",   climate: "mediterranean", foodStyle: "local",       environment: "countryside",  vibe: "romantic"    } },
+    { id: "nature_cherry_blossom",   query: "cherry blossom sakura pink spring Japan",             tags: { budget: "mid-range", travelers: "couple",   interests: ["culture", "photography"],      tripStyle: "cultural",  climate: "temperate",     foodStyle: "local",       environment: "nature",       vibe: "romantic"    } },
+    { id: "nature_salt_flat",        query: "Bolivia salt flat mirror sky reflection vast",         tags: { budget: "mid-range", travelers: "solo",     interests: ["photography", "adventure"],    tripStyle: "adventure", climate: "desert",        foodStyle: "local",       environment: "desert",       vibe: "peaceful"    } },
+    { id: "nature_canyon",           query: "red rock canyon desert dramatic layered formations",   tags: { budget: "budget",    travelers: "friends",  interests: ["hiking", "geology"],           tripStyle: "adventure", climate: "desert",        foodStyle: "local",       environment: "desert",       vibe: "adventurous" } },
+    { id: "nature_glacier",          query: "glacier blue ice arctic iceberg dramatic",             tags: { budget: "luxury",    travelers: "couple",   interests: ["photography", "expedition"],   tripStyle: "adventure", climate: "cold",          foodStyle: "local",       environment: "nature",       vibe: "adventurous" } },
+    { id: "nature_bamboo",           query: "bamboo forest green serene Kyoto Japan path",         tags: { budget: "mid-range", travelers: "couple",   interests: ["nature", "culture"],           tripStyle: "wellness",  climate: "temperate",     foodStyle: "local",       environment: "nature",       vibe: "peaceful"    } },
+    { id: "nature_wildflower",       query: "wildflower meadow colorful bloom spring mountain",    tags: { budget: "budget",    travelers: "couple",   interests: ["photography", "hiking"],       tripStyle: "relaxed",   climate: "temperate",     foodStyle: "local",       environment: "nature",       vibe: "peaceful"    } },
+    { id: "nature_black_sand",       query: "black sand volcanic beach Iceland dramatic waves",    tags: { budget: "mid-range", travelers: "solo",     interests: ["photography", "geology"],      tripStyle: "adventure", climate: "cold",          foodStyle: "local",       environment: "beach",        vibe: "adventurous" } },
+    { id: "nature_misty_forest",     query: "misty morning fog forest river valley serene",        tags: { budget: "budget",    travelers: "solo",     interests: ["nature", "wellness"],          tripStyle: "wellness",  climate: "temperate",     foodStyle: "local",       environment: "nature",       vibe: "peaceful"    } },
+    { id: "nature_rice_terraces",    query: "Bali rice terraces green stepped landscape",          tags: { budget: "budget",    travelers: "couple",   interests: ["culture", "photography"],      tripStyle: "cultural",  climate: "tropical",      foodStyle: "local",       environment: "nature",       vibe: "cultural"    } },
+    { id: "nature_coral_reef",       query: "tropical coral reef colorful fish underwater",        tags: { budget: "mid-range", travelers: "friends",  interests: ["diving", "swimming"],          tripStyle: "adventure", climate: "tropical",      foodStyle: "seafood",     environment: "beach",        vibe: "adventurous" } },
+    { id: "nature_savanna",          query: "African savanna sunset golden grassland acacia",      tags: { budget: "luxury",    travelers: "family",   interests: ["wildlife", "photography"],     tripStyle: "adventure", climate: "desert",        foodStyle: "local",       environment: "nature",       vibe: "adventurous" } },
+    { id: "nature_coastal_cliffs",   query: "dramatic coastal cliffs green ocean waves",           tags: { budget: "mid-range", travelers: "couple",   interests: ["scenery", "hiking"],           tripStyle: "adventure", climate: "temperate",     foodStyle: "seafood",     environment: "nature",       vibe: "adventurous" } },
+    { id: "nature_hot_spring",       query: "geothermal hot spring blue milky Iceland pool",       tags: { budget: "mid-range", travelers: "couple",   interests: ["wellness", "photography"],     tripStyle: "wellness",  climate: "cold",          foodStyle: "local",       environment: "nature",       vibe: "romantic"    } },
+    { id: "nature_tropical_island",  query: "tropical island paradise turquoise lagoon palm",      tags: { budget: "luxury",    travelers: "couple",   interests: ["beach", "relaxation"],         tripStyle: "relaxed",   climate: "tropical",      foodStyle: "seafood",     environment: "beach",        vibe: "romantic"    } },
+    { id: "nature_storm",            query: "storm dramatic dark clouds lightning sunset",          tags: { budget: "budget",    travelers: "solo",     interests: ["photography", "adventure"],    tripStyle: "adventure", climate: "temperate",     foodStyle: "local",       environment: "nature",       vibe: "adventurous" } },
+    { id: "nature_mangrove",         query: "mangrove forest tropical roots green water",          tags: { budget: "budget",    travelers: "solo",     interests: ["nature", "kayaking"],          tripStyle: "adventure", climate: "tropical",      foodStyle: "local",       environment: "nature",       vibe: "peaceful"    } },
   ],
 
-  // ── CITY ────────────────────────────────────────────────────────────────────
+  // ── CITY ─────────────────────────────────────────────────────────────────────
   city: [
-    {
-      id: "city_street",
-      query: "city travel urban street photography culture",
-      tags: { budget: "mid-range", travelers: "solo", interests: ["city", "photography", "culture"], tripStyle: "cultural", climate: "temperate", foodStyle: "local", environment: "city", vibe: "cultural" },
-    },
-    {
-      id: "city_skyline",
-      query: "city skyline night lights skyscrapers modern",
-      tags: { budget: "mid-range", travelers: "friends", interests: ["city", "nightlife", "views"], tripStyle: "cultural", climate: "temperate", foodStyle: "diverse", environment: "city", vibe: "social" },
-    },
-    {
-      id: "city_europe",
-      query: "European historic city cobblestone architecture travel",
-      tags: { budget: "mid-range", travelers: "couple", interests: ["history", "culture", "architecture"], tripStyle: "cultural", climate: "temperate", foodStyle: "fine-dining", environment: "city", vibe: "romantic" },
-    },
-    {
-      id: "city_asia",
-      query: "Asian city neon market street food bustling",
-      tags: { budget: "budget", travelers: "solo", interests: ["culture", "food", "city"], tripStyle: "cultural", climate: "tropical", foodStyle: "street-food", environment: "city", vibe: "adventurous" },
-    },
-    {
-      id: "city_rooftop",
-      query: "rooftop bar terrace city view cocktails evening",
-      tags: { budget: "mid-range", travelers: "friends", interests: ["nightlife", "city", "socializing"], tripStyle: "party", climate: "temperate", foodStyle: "diverse", environment: "city", vibe: "social" },
-    },
-    {
-      id: "city_cafe",
-      query: "sidewalk café street morning coffee culture",
-      tags: { budget: "mid-range", travelers: "couple", interests: ["relaxation", "culture", "food"], tripStyle: "relaxed", climate: "temperate", foodStyle: "local", environment: "city", vibe: "peaceful" },
-    },
-    {
-      id: "city_luxury",
-      query: "luxury hotel city penthouse suite skyline view",
-      tags: { budget: "luxury", travelers: "couple", interests: ["city", "luxury", "comfort"], tripStyle: "cultural", climate: "temperate", foodStyle: "fine-dining", environment: "city", vibe: "luxurious" },
-    },
+    { id: "city_cyberpunk",          query: "Tokyo Shibuya neon cyberpunk night rain street",       tags: { budget: "mid-range", travelers: "solo",    interests: ["nightlife", "photography"],    tripStyle: "cultural",  climate: "temperate",     foodStyle: "street-food", environment: "city",         vibe: "social"      } },
+    { id: "city_medieval",           query: "European medieval cobblestone old town architecture",   tags: { budget: "mid-range", travelers: "couple",  interests: ["history", "architecture"],     tripStyle: "cultural",  climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "city_moroccan",           query: "Moroccan medina riad blue pink door alley",            tags: { budget: "budget",    travelers: "solo",    interests: ["culture", "photography"],      tripStyle: "cultural",  climate: "desert",        foodStyle: "street-food", environment: "city",         vibe: "cultural"    } },
+    { id: "city_greek_island",       query: "Santorini whitewashed blue dome sunset Greece",        tags: { budget: "luxury",    travelers: "couple",  interests: ["scenery", "relaxation"],       tripStyle: "relaxed",   climate: "mediterranean", foodStyle: "seafood",     environment: "city",         vibe: "romantic"    } },
+    { id: "city_dubai",              query: "Dubai futuristic glass skyscraper luxury desert night", tags: { budget: "luxury",   travelers: "couple",  interests: ["luxury", "architecture"],      tripStyle: "cultural",  climate: "desert",        foodStyle: "fine-dining", environment: "city",         vibe: "luxurious"   } },
+    { id: "city_paris",              query: "Paris Eiffel Tower romantic street cafe evening",      tags: { budget: "mid-range", travelers: "couple",  interests: ["culture", "romance"],          tripStyle: "cultural",  climate: "temperate",     foodStyle: "fine-dining", environment: "city",         vibe: "romantic"    } },
+    { id: "city_new_york",           query: "New York Manhattan aerial skyline golden hour",        tags: { budget: "mid-range", travelers: "friends", interests: ["city", "nightlife"],           tripStyle: "cultural",  climate: "temperate",     foodStyle: "diverse",     environment: "city",         vibe: "social"      } },
+    { id: "city_barcelona",          query: "Barcelona Gaudi colorful modernist architecture",      tags: { budget: "mid-range", travelers: "couple",  interests: ["architecture", "culture"],     tripStyle: "cultural",  climate: "mediterranean", foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "city_venice",             query: "Venice canal gondola golden fog historic romantic",    tags: { budget: "luxury",    travelers: "couple",  interests: ["history", "romance"],          tripStyle: "cultural",  climate: "temperate",     foodStyle: "fine-dining", environment: "city",         vibe: "romantic"    } },
+    { id: "city_amsterdam",          query: "Amsterdam canal bikes bridge evening reflections",     tags: { budget: "mid-range", travelers: "friends", interests: ["cycling", "culture"],          tripStyle: "cultural",  climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "peaceful"    } },
+    { id: "city_singapore",          query: "Singapore Marina Bay futuristic gardens night lights", tags: { budget: "luxury",    travelers: "family",  interests: ["architecture", "city"],        tripStyle: "cultural",  climate: "tropical",      foodStyle: "diverse",     environment: "city",         vibe: "luxurious"   } },
+    { id: "city_istanbul",           query: "Istanbul Grand Bazaar colorful spice market vibrant",  tags: { budget: "budget",    travelers: "friends", interests: ["culture", "shopping"],         tripStyle: "cultural",  climate: "mediterranean", foodStyle: "street-food", environment: "city",         vibe: "cultural"    } },
+    { id: "city_havana",             query: "Havana colorful vintage cars colonial street Cuba",    tags: { budget: "budget",    travelers: "friends", interests: ["culture", "music"],            tripStyle: "cultural",  climate: "tropical",      foodStyle: "local",       environment: "city",         vibe: "social"      } },
+    { id: "city_edinburgh",          query: "Edinburgh castle medieval misty historic dramatic",    tags: { budget: "mid-range", travelers: "couple",  interests: ["history", "architecture"],     tripStyle: "cultural",  climate: "cold",          foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "city_seoul",              query: "Seoul modern traditional architecture contrast",       tags: { budget: "mid-range", travelers: "solo",    interests: ["culture", "technology"],       tripStyle: "cultural",  climate: "temperate",     foodStyle: "street-food", environment: "city",         vibe: "cultural"    } },
+    { id: "city_hong_kong",          query: "Hong Kong neon signs street night crowds",            tags: { budget: "mid-range", travelers: "friends", interests: ["nightlife", "shopping"],       tripStyle: "party",     climate: "tropical",      foodStyle: "street-food", environment: "city",         vibe: "social"      } },
+    { id: "city_rio",                query: "Rio de Janeiro aerial colorful hillside city",        tags: { budget: "budget",    travelers: "friends", interests: ["culture", "music"],            tripStyle: "party",     climate: "tropical",      foodStyle: "local",       environment: "city",         vibe: "social"      } },
+    { id: "city_lisbon",             query: "Lisbon colorful azulejo tiles tram hillside",         tags: { budget: "mid-range", travelers: "couple",  interests: ["culture", "food"],             tripStyle: "cultural",  climate: "mediterranean", foodStyle: "seafood",     environment: "city",         vibe: "cultural"    } },
+    { id: "city_vienna",             query: "Vienna imperial palace baroque architecture grand",    tags: { budget: "luxury",    travelers: "couple",  interests: ["history", "music"],            tripStyle: "cultural",  climate: "temperate",     foodStyle: "fine-dining", environment: "city",         vibe: "cultural"    } },
+    { id: "city_prague",             query: "Prague Gothic castle bridge autumn fog",              tags: { budget: "mid-range", travelers: "couple",  interests: ["history", "architecture"],     tripStyle: "cultural",  climate: "cold",          foodStyle: "local",       environment: "city",         vibe: "romantic"    } },
+    { id: "city_london",             query: "London foggy Thames bridge classic evening",          tags: { budget: "mid-range", travelers: "couple",  interests: ["culture", "history"],          tripStyle: "cultural",  climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "peaceful"    } },
+    { id: "city_marrakech",          query: "Marrakech rooftop terrace sunset panorama medina",    tags: { budget: "mid-range", travelers: "couple",  interests: ["culture", "photography"],      tripStyle: "cultural",  climate: "desert",        foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "city_berlin",             query: "Berlin street art urban graffiti colorful murals",    tags: { budget: "budget",    travelers: "friends", interests: ["art", "culture"],              tripStyle: "cultural",  climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "social"      } },
+    { id: "city_cape_town",          query: "Cape Town waterfront Table Mountain colorful harbor",  tags: { budget: "mid-range", travelers: "family",  interests: ["nature", "city"],              tripStyle: "adventure", climate: "mediterranean", foodStyle: "seafood",     environment: "city",         vibe: "adventurous" } },
+    { id: "city_chicago",            query: "Chicago river architecture skyscraper boat golden",   tags: { budget: "mid-range", travelers: "friends", interests: ["architecture", "city"],        tripStyle: "cultural",  climate: "temperate",     foodStyle: "diverse",     environment: "city",         vibe: "cultural"    } },
   ],
 
-  // ── ACTIVITIES / ADVENTURE ──────────────────────────────────────────────────
- activities: [
-  {
-    id: "activities_surfing",
-    query: "surfing beach waves ocean sport tropical travel",
-    tags: {
-      budget: "budget",
-      travelers: "friends",
-      interests: ["surfing", "beach", "ocean"],
-      tripStyle: "adventure",
-      climate: "tropical",
-      foodStyle: "seafood",
-      environment: "beach",
-      vibe: "adventurous",
-    },
-  },
-
-  {
-    id: "activities_hiking",
-    query: "hiking trekking mountains trail backpack nature",
-    tags: {
-      budget: "budget",
-      travelers: "solo",
-      interests: ["hiking", "nature", "fitness"],
-      tripStyle: "adventure",
-      climate: "temperate",
-      foodStyle: "local",
-      environment: "mountain",
-      vibe: "peaceful",
-    },
-  },
-
-  {
-    id: "activities_luxury_resort",
-    query: "luxury resort infinity pool spa private beach",
-    tags: {
-      budget: "luxury",
-      travelers: "couple",
-      interests: ["spa", "luxury", "relaxation"],
-      tripStyle: "relaxed",
-      climate: "tropical",
-      foodStyle: "fine-dining",
-      environment: "beach",
-      vibe: "luxurious",
-    },
-  },
-
-  {
-    id: "activities_food_tour",
-    query: "street food local cuisine food market culinary travel",
-    tags: {
-      budget: "mid-range",
-      travelers: "friends",
-      interests: ["food", "culture", "local-life"],
-      tripStyle: "cultural",
-      climate: "temperate",
-      foodStyle: "street-food",
-      environment: "city",
-      vibe: "social",
-    },
-  },
-
-  {
-    id: "activities_camping",
-    query: "camping forest bonfire tent outdoor adventure",
-    tags: {
-      budget: "budget",
-      travelers: "friends",
-      interests: ["camping", "nature", "outdoor"],
-      tripStyle: "adventure",
-      climate: "cold",
-      foodStyle: "local",
-      environment: "nature",
-      vibe: "peaceful",
-    },
-  },
-
-  {
-    id: "activities_nightlife",
-    query: "nightlife club party rooftop neon city night",
-    tags: {
-      budget: "mid-range",
-      travelers: "friends",
-      interests: ["party", "music", "nightlife"],
-      tripStyle: "party",
-      climate: "temperate",
-      foodStyle: "diverse",
-      environment: "city",
-      vibe: "social",
-    },
-  },
-
-  {
-    id: "activities_museum",
-    query: "museum history architecture culture art gallery",
-    tags: {
-      budget: "budget",
-      travelers: "solo",
-      interests: ["history", "culture", "art"],
-      tripStyle: "cultural",
-      climate: "temperate",
-      foodStyle: "local",
-      environment: "city",
-      vibe: "cultural",
-    },
-  },
-
-  {
-    id: "activities_safari",
-    query: "safari wildlife africa animals jeep nature",
-    tags: {
-      budget: "luxury",
-      travelers: "family",
-      interests: ["wildlife", "nature", "photography"],
-      tripStyle: "adventure",
-      climate: "desert",
-      foodStyle: "local",
-      environment: "nature",
-      vibe: "adventurous",
-    },
-  },
-
-  {
-    id: "activities_romantic",
-    query: "romantic dinner sunset couple honeymoon luxury",
-    tags: {
-      budget: "luxury",
-      travelers: "couple",
-      interests: ["romance", "relaxation", "luxury"],
-      tripStyle: "relaxed",
-      climate: "temperate",
-      foodStyle: "fine-dining",
-      environment: "beach",
-      vibe: "romantic",
-    },
-  },
-
-  {
-    id: "activities_skiing",
-    query: "skiing snow mountain winter resort adventure",
-    tags: {
-      budget: "mid-range",
-      travelers: "friends",
-      interests: ["skiing", "snow", "winter"],
-      tripStyle: "adventure",
-      climate: "cold",
-      foodStyle: "local",
-      environment: "mountain",
-      vibe: "adventurous",
-    },
-  },
-  ],
-
-
-  // ── FOOD ────────────────────────────────────────────────────────────────────
+  // ── FOOD ─────────────────────────────────────────────────────────────────────
   food: [
-    {
-      id: "food_street",
-      query: "street food market travel local cuisine stalls",
-      tags: { budget: "budget", travelers: "solo", interests: ["food", "culture", "street food"], tripStyle: "foodie", climate: "tropical", foodStyle: "street-food", environment: "city", vibe: "cultural" },
-    },
-    {
-      id: "food_fine_dining",
-      query: "fine dining restaurant gourmet elegant chef plating",
-      tags: { budget: "luxury", travelers: "couple", interests: ["gastronomy", "luxury dining"], tripStyle: "foodie", climate: "temperate", foodStyle: "fine-dining", environment: "city", vibe: "luxurious" },
-    },
-    {
-      id: "food_local_market",
-      query: "farmers market fresh produce local ingredients food",
-      tags: { budget: "budget", travelers: "solo", interests: ["food", "local culture", "markets"], tripStyle: "foodie", climate: "temperate", foodStyle: "local", environment: "city", vibe: "cultural" },
-    },
-    {
-      id: "food_seafood",
-      query: "seafood restaurant coastal harbour fresh fish",
-      tags: { budget: "mid-range", travelers: "family", interests: ["seafood", "food", "coastal"], tripStyle: "foodie", climate: "mediterranean", foodStyle: "seafood", environment: "beach", vibe: "social" },
-    },
-    {
-      id: "food_cooking",
-      query: "cooking class chef kitchen local cuisine",
-      tags: { budget: "mid-range", travelers: "couple", interests: ["cooking", "culture", "food"], tripStyle: "foodie", climate: "tropical", foodStyle: "local", environment: "city", vibe: "cultural" },
-    },
-    {
-      id: "food_vineyard",
-      query: "wine vineyard winery tasting table countryside",
-      tags: { budget: "luxury", travelers: "couple", interests: ["wine", "gastronomy", "scenery"], tripStyle: "foodie", climate: "mediterranean", foodStyle: "fine-dining", environment: "countryside", vibe: "romantic" },
-    },
-    {
-      id: "food_asian",
-      query: "ramen sushi dumplings Asian noodles restaurant",
-      tags: { budget: "budget", travelers: "solo", interests: ["food", "Asian cuisine", "culture"], tripStyle: "foodie", climate: "tropical", foodStyle: "local", environment: "city", vibe: "cultural" },
-    },
-    {
-      id: "food_breakfast",
-      query: "brunch cafe food spread morning aesthetic",
-      tags: { budget: "mid-range", travelers: "couple", interests: ["food", "relaxation", "culture"], tripStyle: "foodie", climate: "temperate", foodStyle: "local", environment: "city", vibe: "peaceful" },
-    },
+    { id: "food_night_market",       query: "Asian night market street food lanterns glowing",     tags: { budget: "budget",    travelers: "friends", interests: ["food", "culture"],             tripStyle: "foodie",    climate: "tropical",      foodStyle: "street-food", environment: "city",         vibe: "social"      } },
+    { id: "food_fine_dining",        query: "fine dining gourmet elegant plating restaurant chef",  tags: { budget: "luxury",    travelers: "couple",  interests: ["gastronomy", "luxury"],        tripStyle: "foodie",    climate: "temperate",     foodStyle: "fine-dining", environment: "city",         vibe: "luxurious"   } },
+    { id: "food_pasta",              query: "handmade fresh pasta Italian kitchen rustic",          tags: { budget: "mid-range", travelers: "couple",  interests: ["food", "culture"],             tripStyle: "foodie",    climate: "mediterranean", foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "food_spice_market",       query: "Moroccan spice market colorful saffron herbs",         tags: { budget: "budget",    travelers: "solo",    interests: ["food", "culture"],             tripStyle: "cultural",  climate: "desert",        foodStyle: "street-food", environment: "city",         vibe: "cultural"    } },
+    { id: "food_sushi",              query: "Japanese sushi omakase traditional counter chef",      tags: { budget: "luxury",    travelers: "couple",  interests: ["food", "culture"],             tripStyle: "foodie",    climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "food_patisserie",         query: "French patisserie croissant bakery pastry colorful",   tags: { budget: "mid-range", travelers: "couple",  interests: ["food", "culture"],             tripStyle: "foodie",    climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "peaceful"    } },
+    { id: "food_pizza",              query: "Neapolitan wood fired pizza Naples char rustic",       tags: { budget: "budget",    travelers: "friends", interests: ["food", "culture"],             tripStyle: "foodie",    climate: "mediterranean", foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "food_farmers_market",     query: "farmers market fresh produce colorful morning sun",    tags: { budget: "budget",    travelers: "solo",    interests: ["food", "local life"],          tripStyle: "foodie",    climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "peaceful"    } },
+    { id: "food_ramen",              query: "ramen bowl steaming rich broth noodles Japanese",      tags: { budget: "budget",    travelers: "solo",    interests: ["food", "culture"],             tripStyle: "foodie",    climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "food_tapas",              query: "Spanish tapas bar pintxos Basque wine colorful",       tags: { budget: "mid-range", travelers: "friends", interests: ["food", "culture"],             tripStyle: "foodie",    climate: "mediterranean", foodStyle: "local",       environment: "city",         vibe: "social"      } },
+    { id: "food_seafood",            query: "fresh seafood oysters coastal harbour restaurant",      tags: { budget: "mid-range", travelers: "family",  interests: ["food", "coastal"],             tripStyle: "foodie",    climate: "mediterranean", foodStyle: "seafood",     environment: "beach",        vibe: "peaceful"    } },
+    { id: "food_curry",              query: "Indian curry spices colorful traditional thali",       tags: { budget: "budget",    travelers: "solo",    interests: ["food", "culture"],             tripStyle: "foodie",    climate: "tropical",      foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "food_coffee",             query: "coffee latte art third wave cafe aesthetic cosy",      tags: { budget: "mid-range", travelers: "solo",    interests: ["food", "relaxation"],          tripStyle: "relaxed",   climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "peaceful"    } },
+    { id: "food_vineyard",           query: "wine tasting vineyard Tuscany table romantic",         tags: { budget: "luxury",    travelers: "couple",  interests: ["wine", "gastronomy"],          tripStyle: "foodie",    climate: "mediterranean", foodStyle: "fine-dining", environment: "countryside",  vibe: "romantic"    } },
+    { id: "food_tacos",              query: "Mexican street tacos cart colorful salsa market",      tags: { budget: "budget",    travelers: "friends", interests: ["food", "culture"],             tripStyle: "foodie",    climate: "tropical",      foodStyle: "street-food", environment: "city",         vibe: "social"      } },
+    { id: "food_brunch",             query: "brunch beautiful spread aesthetic table sunlight",     tags: { budget: "mid-range", travelers: "friends", interests: ["food", "socializing"],         tripStyle: "relaxed",   climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "peaceful"    } },
+    { id: "food_mezze",              query: "Greek mezze traditional Mediterranean spread table",   tags: { budget: "mid-range", travelers: "family",  interests: ["food", "culture"],             tripStyle: "foodie",    climate: "mediterranean", foodStyle: "local",       environment: "beach",        vibe: "social"      } },
+    { id: "food_dim_sum",            query: "dim sum bamboo steamer Chinese traditional morning",   tags: { budget: "budget",    travelers: "family",  interests: ["food", "culture"],             tripStyle: "foodie",    climate: "tropical",      foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "food_dessert",            query: "chocolate dessert pastry luxury plating elegant",      tags: { budget: "luxury",    travelers: "couple",  interests: ["food", "luxury"],              tripStyle: "foodie",    climate: "temperate",     foodStyle: "fine-dining", environment: "city",         vibe: "luxurious"   } },
+    { id: "food_bbq",                query: "barbecue outdoor grill smoky fire friends gathering",  tags: { budget: "budget",    travelers: "friends", interests: ["food", "socializing"],         tripStyle: "relaxed",   climate: "temperate",     foodStyle: "local",       environment: "nature",       vibe: "social"      } },
+    { id: "food_tropical_fruit",     query: "tropical exotic fruit colorful market display",        tags: { budget: "budget",    travelers: "solo",    interests: ["food", "culture"],             tripStyle: "adventure", climate: "tropical",      foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "food_cooking_class",      query: "cooking class chef traditional local kitchen herbs",   tags: { budget: "mid-range", travelers: "couple",  interests: ["food", "culture"],             tripStyle: "foodie",    climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "food_cheese_wine",        query: "cheese wine board rustic wooden table countryside",    tags: { budget: "mid-range", travelers: "couple",  interests: ["food", "wine"],                tripStyle: "relaxed",   climate: "mediterranean", foodStyle: "fine-dining", environment: "countryside",  vibe: "romantic"    } },
+    { id: "food_gelato",             query: "artisan gelato colorful Italian scoops display",       tags: { budget: "budget",    travelers: "family",  interests: ["food", "culture"],             tripStyle: "relaxed",   climate: "mediterranean", foodStyle: "local",       environment: "city",         vibe: "peaceful"    } },
+    { id: "food_korean_street",      query: "Korean street food stalls colorful tteokbokki neon",  tags: { budget: "budget",    travelers: "solo",    interests: ["food", "culture"],             tripStyle: "foodie",    climate: "temperate",     foodStyle: "street-food", environment: "city",         vibe: "social"      } },
   ],
 
-  // ── BEACHES ─────────────────────────────────────────────────────────────────
+  // ── BEACHES ──────────────────────────────────────────────────────────────────
   beaches: [
-    {
-      id: "beaches_tropical",
-      query: "tropical beach paradise turquoise clear water white sand",
-      tags: { budget: "mid-range", travelers: "couple", interests: ["beach", "relaxation", "swimming"], tripStyle: "relaxed", climate: "tropical", foodStyle: "seafood", environment: "beach", vibe: "peaceful" },
-    },
-    {
-      id: "beaches_resort",
-      query: "beach resort pool ocean vacation luxury sun",
-      tags: { budget: "luxury", travelers: "family", interests: ["beach", "swimming", "relaxation"], tripStyle: "relaxed", climate: "tropical", foodStyle: "fine-dining", environment: "beach", vibe: "luxurious" },
-    },
-    {
-      id: "beaches_mediterranean",
-      query: "Mediterranean sea cliff rocky beach blue water",
-      tags: { budget: "mid-range", travelers: "couple", interests: ["beach", "scenery", "sailing"], tripStyle: "relaxed", climate: "mediterranean", foodStyle: "seafood", environment: "beach", vibe: "romantic" },
-    },
-    {
-      id: "beaches_surf",
-      query: "surfing beach waves sport ocean sunset",
-      tags: { budget: "budget", travelers: "friends", interests: ["surfing", "beach", "sport"], tripStyle: "adventure", climate: "tropical", foodStyle: "local", environment: "beach", vibe: "adventurous" },
-    },
-    {
-      id: "beaches_party",
-      query: "beach party friends summer vacation fun volleyball",
-      tags: { budget: "budget", travelers: "friends", interests: ["beach", "socializing", "sport"], tripStyle: "party", climate: "tropical", foodStyle: "diverse", environment: "beach", vibe: "social" },
-    },
-    {
-      id: "beaches_island",
-      query: "tropical island getaway boat ocean isolated paradise",
-      tags: { budget: "luxury", travelers: "couple", interests: ["island", "relaxation", "diving"], tripStyle: "relaxed", climate: "tropical", foodStyle: "seafood", environment: "beach", vibe: "luxurious" },
-    },
-    {
-      id: "beaches_sunset",
-      query: "beach sunset golden hour ocean waves silhouette",
-      tags: { budget: "budget", travelers: "couple", interests: ["photography", "relaxation", "romance"], tripStyle: "relaxed", climate: "tropical", foodStyle: "local", environment: "beach", vibe: "romantic" },
-    },
+    { id: "beach_caribbean",         query: "Caribbean turquoise paradise white sand palm trees",   tags: { budget: "mid-range", travelers: "couple",  interests: ["beach", "relaxation"],         tripStyle: "relaxed",   climate: "tropical",      foodStyle: "seafood",     environment: "beach",        vibe: "peaceful"    } },
+    { id: "beach_mediterranean",     query: "Mediterranean rocky cove turquoise cliff boat",       tags: { budget: "mid-range", travelers: "couple",  interests: ["beach", "sailing"],            tripStyle: "relaxed",   climate: "mediterranean", foodStyle: "seafood",     environment: "beach",        vibe: "romantic"    } },
+    { id: "beach_surf_action",       query: "surfer ocean tube wave tropical action sport",        tags: { budget: "budget",    travelers: "friends", interests: ["surfing", "sport"],            tripStyle: "adventure", climate: "tropical",      foodStyle: "local",       environment: "beach",        vibe: "adventurous" } },
+    { id: "beach_overwater",         query: "overwater bungalow Maldives luxury turquoise lagoon",  tags: { budget: "luxury",    travelers: "couple",  interests: ["luxury", "relaxation"],        tripStyle: "relaxed",   climate: "tropical",      foodStyle: "fine-dining", environment: "beach",        vibe: "luxurious"   } },
+    { id: "beach_hammock",           query: "hammock palm tree turquoise lagoon Caribbean idyllic", tags: { budget: "mid-range", travelers: "couple",  interests: ["relaxation", "beach"],         tripStyle: "relaxed",   climate: "tropical",      foodStyle: "local",       environment: "beach",        vibe: "peaceful"    } },
+    { id: "beach_black_sand",        query: "black volcanic sand beach Iceland dramatic waves",     tags: { budget: "mid-range", travelers: "solo",    interests: ["photography", "geology"],      tripStyle: "adventure", climate: "cold",          foodStyle: "local",       environment: "beach",        vibe: "adventurous" } },
+    { id: "beach_sunset",            query: "beach sunset silhouette golden hour ocean horizon",    tags: { budget: "budget",    travelers: "couple",  interests: ["photography", "romance"],      tripStyle: "relaxed",   climate: "tropical",      foodStyle: "local",       environment: "beach",        vibe: "romantic"    } },
+    { id: "beach_aerial",            query: "tropical island aerial overhead turquoise sand",       tags: { budget: "luxury",    travelers: "couple",  interests: ["photography", "relaxation"],   tripStyle: "relaxed",   climate: "tropical",      foodStyle: "seafood",     environment: "beach",        vibe: "peaceful"    } },
+    { id: "beach_wild_atlantic",     query: "wild Atlantic storm waves dramatic cliffs coast",      tags: { budget: "budget",    travelers: "solo",    interests: ["photography", "hiking"],       tripStyle: "adventure", climate: "cold",          foodStyle: "local",       environment: "beach",        vibe: "adventurous" } },
+    { id: "beach_snorkel",           query: "snorkeling crystal clear tropical fish colorful reef", tags: { budget: "mid-range", travelers: "family",  interests: ["diving", "swimming"],          tripStyle: "adventure", climate: "tropical",      foodStyle: "seafood",     environment: "beach",        vibe: "adventurous" } },
+    { id: "beach_bonfire",           query: "beach bonfire night stars friends summer gathering",   tags: { budget: "budget",    travelers: "friends", interests: ["socializing", "beach"],        tripStyle: "relaxed",   climate: "temperate",     foodStyle: "local",       environment: "beach",        vibe: "social"      } },
+    { id: "beach_sailing",           query: "sailing catamaran crystal blue water ocean",           tags: { budget: "luxury",    travelers: "friends", interests: ["sailing", "adventure"],        tripStyle: "adventure", climate: "mediterranean", foodStyle: "seafood",     environment: "beach",        vibe: "adventurous" } },
+    { id: "beach_volleyball",        query: "beach volleyball friends summer fun sport tropical",   tags: { budget: "budget",    travelers: "friends", interests: ["sport", "socializing"],        tripStyle: "party",     climate: "tropical",      foodStyle: "local",       environment: "beach",        vibe: "social"      } },
+    { id: "beach_morning_fog",       query: "morning calm misty beach fog peaceful empty",          tags: { budget: "budget",    travelers: "solo",    interests: ["photography", "wellness"],     tripStyle: "wellness",  climate: "temperate",     foodStyle: "local",       environment: "beach",        vibe: "peaceful"    } },
+    { id: "beach_thailand",          query: "Thai longtail boat limestone karst turquoise bay",    tags: { budget: "mid-range", travelers: "couple",  interests: ["adventure", "scenery"],        tripStyle: "adventure", climate: "tropical",      foodStyle: "street-food", environment: "beach",        vibe: "adventurous" } },
+    { id: "beach_australia",         query: "Australian golden surf beach empty dramatic",          tags: { budget: "mid-range", travelers: "solo",    interests: ["surfing", "nature"],           tripStyle: "adventure", climate: "tropical",      foodStyle: "local",       environment: "beach",        vibe: "adventurous" } },
+    { id: "beach_bar",               query: "beach bar wooden deck palms tropical sunset",          tags: { budget: "mid-range", travelers: "friends", interests: ["socializing", "relaxation"],   tripStyle: "party",     climate: "tropical",      foodStyle: "diverse",     environment: "beach",        vibe: "social"      } },
+    { id: "beach_drone",             query: "aerial drone beach water patterns sand turquoise",     tags: { budget: "mid-range", travelers: "solo",    interests: ["photography", "adventure"],    tripStyle: "adventure", climate: "tropical",      foodStyle: "local",       environment: "beach",        vibe: "peaceful"    } },
+    { id: "beach_lighthouse",        query: "rocky coast lighthouse dramatic stormy waves",         tags: { budget: "budget",    travelers: "couple",  interests: ["photography", "scenery"],      tripStyle: "adventure", climate: "cold",          foodStyle: "seafood",     environment: "beach",        vibe: "adventurous" } },
+    { id: "beach_pink_sand",         query: "pink sand beach Bahamas blush soft idyllic",          tags: { budget: "luxury",    travelers: "couple",  interests: ["beach", "romance"],            tripStyle: "relaxed",   climate: "tropical",      foodStyle: "seafood",     environment: "beach",        vibe: "romantic"    } },
+    { id: "beach_bali_temple",       query: "Bali ocean temple sunset spiritual ceremony",          tags: { budget: "mid-range", travelers: "couple",  interests: ["culture", "photography"],      tripStyle: "cultural",  climate: "tropical",      foodStyle: "local",       environment: "beach",        vibe: "cultural"    } },
+    { id: "beach_kayak_cave",        query: "kayak sea cave emerald water coastal",                 tags: { budget: "mid-range", travelers: "friends", interests: ["adventure", "kayaking"],       tripStyle: "adventure", climate: "mediterranean", foodStyle: "seafood",     environment: "beach",        vibe: "adventurous" } },
+    { id: "beach_colorful_umbrellas",query: "colorful beach umbrellas chairs Mediterranean crowd",  tags: { budget: "mid-range", travelers: "family",  interests: ["beach", "relaxation"],         tripStyle: "relaxed",   climate: "mediterranean", foodStyle: "seafood",     environment: "beach",        vibe: "peaceful"    } },
+    { id: "beach_river_jungle",      query: "river beach tropical lush jungle green water",        tags: { budget: "budget",    travelers: "friends", interests: ["nature", "swimming"],          tripStyle: "adventure", climate: "tropical",      foodStyle: "local",       environment: "beach",        vibe: "adventurous" } },
+    { id: "beach_thatched_hut",      query: "thatched beach hut tropical overwater wooden",        tags: { budget: "luxury",    travelers: "couple",  interests: ["relaxation", "luxury"],        tripStyle: "relaxed",   climate: "tropical",      foodStyle: "seafood",     environment: "beach",        vibe: "romantic"    } },
   ],
 
-  // ── CULTURE ─────────────────────────────────────────────────────────────────
- culture: [
-  {
-    id: "culture_islamic_architecture",
-    query: "mosque islamic architecture arabic design morocco turkey",
-    tags: {
-      budget: "mid-range",
-      travelers: "family",
-      interests: ["islamic-culture", "architecture", "history"],
-      tripStyle: "cultural",
-      climate: "mediterranean",
-      foodStyle: "local",
-      environment: "city",
-      vibe: "cultural"
-    },
-  },
-  {
-    id: "culture_arab_market",
-    query: "arab souk bazaar spices traditional market middle east",
-    tags: {
-      budget: "budget",
-      travelers: "friends",
-      interests: ["shopping", "culture", "food"],
-      tripStyle: "cultural",
-      climate: "desert",
-      foodStyle: "street-food",
-      environment: "city",
-      vibe: "social"
-    },
-  },
+  // ── CULTURE ──────────────────────────────────────────────────────────────────
+  culture: [
+    { id: "culture_holi",            query: "Indian Holi festival colors powder celebration crowd", tags: { budget: "budget",    travelers: "friends", interests: ["festivals", "culture"],        tripStyle: "cultural",  climate: "tropical",      foodStyle: "local",       environment: "city",         vibe: "social"      } },
+    { id: "culture_geisha",          query: "Japanese geisha kimono traditional Kyoto street",      tags: { budget: "luxury",    travelers: "couple",  interests: ["culture", "history"],          tripStyle: "cultural",  climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "culture_fes_medina",      query: "Fes Morocco blue labyrinth medina alley architecture", tags: { budget: "mid-range", travelers: "couple",  interests: ["architecture", "culture"],     tripStyle: "cultural",  climate: "desert",        foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "culture_dia_muertos",     query: "Mexican Day of Dead Dia Muertos festival altar color",  tags: { budget: "budget",    travelers: "friends", interests: ["festivals", "culture"],        tripStyle: "cultural",  climate: "tropical",      foodStyle: "local",       environment: "city",         vibe: "social"      } },
+    { id: "culture_lantern_festival",query: "Chinese lantern festival night red glow celebration",   tags: { budget: "mid-range", travelers: "family",  interests: ["festivals", "culture"],        tripStyle: "cultural",  climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "culture_venice_carnival", query: "Venice carnival mask elaborate costume gold",           tags: { budget: "luxury",    travelers: "couple",  interests: ["culture", "history"],          tripStyle: "cultural",  climate: "temperate",     foodStyle: "fine-dining", environment: "city",         vibe: "cultural"    } },
+    { id: "culture_rio_carnival",    query: "Rio de Janeiro carnival samba dance costume parade",    tags: { budget: "mid-range", travelers: "friends", interests: ["music", "festivals"],          tripStyle: "party",     climate: "tropical",      foodStyle: "local",       environment: "city",         vibe: "social"      } },
+    { id: "culture_dervish",         query: "Turkish whirling dervish ceremony traditional spiritual",tags: { budget: "mid-range", travelers: "solo",    interests: ["culture", "spirituality"],     tripStyle: "cultural",  climate: "mediterranean", foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "culture_monk",            query: "Thai Buddhist monk saffron robe temple sunrise",        tags: { budget: "budget",    travelers: "solo",    interests: ["spirituality", "culture"],     tripStyle: "cultural",  climate: "tropical",      foodStyle: "local",       environment: "city",         vibe: "peaceful"    } },
+    { id: "culture_flamenco",        query: "Spanish flamenco dancer red dress dramatic stage",      tags: { budget: "mid-range", travelers: "couple",  interests: ["music", "culture"],            tripStyle: "cultural",  climate: "mediterranean", foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "culture_bali_offering",   query: "Balinese temple offering ceremony flower basket",       tags: { budget: "budget",    travelers: "solo",    interests: ["spirituality", "culture"],     tripStyle: "cultural",  climate: "tropical",      foodStyle: "local",       environment: "nature",       vibe: "peaceful"    } },
+    { id: "culture_highland_games",  query: "Scottish Highland games traditional festival toss",     tags: { budget: "mid-range", travelers: "friends", interests: ["culture", "sport"],            tripStyle: "cultural",  climate: "cold",          foodStyle: "local",       environment: "nature",       vibe: "social"      } },
+    { id: "culture_andean_market",   query: "Peruvian Andean textile market colorful woven",         tags: { budget: "budget",    travelers: "solo",    interests: ["shopping", "culture"],         tripStyle: "cultural",  climate: "cold",          foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "culture_rajasthan",       query: "Rajasthani palace fort India golden architecture",       tags: { budget: "luxury",    travelers: "couple",  interests: ["history", "architecture"],     tripStyle: "cultural",  climate: "desert",        foodStyle: "local",       environment: "city",         vibe: "luxurious"   } },
+    { id: "culture_ottoman_mosque",  query: "Ottoman mosque interior tilework dome Istanbul blue",    tags: { budget: "mid-range", travelers: "couple",  interests: ["architecture", "religion"],    tripStyle: "cultural",  climate: "mediterranean", foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "culture_christmas_market",query: "European Christmas market festive night lights winter",  tags: { budget: "mid-range", travelers: "family",  interests: ["culture", "shopping"],         tripStyle: "cultural",  climate: "cold",          foodStyle: "local",       environment: "city",         vibe: "social"      } },
+    { id: "culture_aboriginal",      query: "Aboriginal Australian art ceremony traditional",         tags: { budget: "mid-range", travelers: "solo",    interests: ["culture", "art"],              tripStyle: "cultural",  climate: "desert",        foodStyle: "local",       environment: "nature",       vibe: "cultural"    } },
+    { id: "culture_greek_ruins",     query: "ancient Greek ruins Parthenon columns dramatic sky",    tags: { budget: "mid-range", travelers: "couple",  interests: ["history", "architecture"],     tripStyle: "cultural",  climate: "mediterranean", foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "culture_sumo",            query: "sumo wrestling Japan traditional ceremony ring",         tags: { budget: "mid-range", travelers: "solo",    interests: ["culture", "sport"],            tripStyle: "cultural",  climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "culture_andean_village",  query: "Andean mountain village traditional life colorful",      tags: { budget: "budget",    travelers: "solo",    interests: ["culture", "trekking"],         tripStyle: "cultural",  climate: "cold",          foodStyle: "local",       environment: "mountain",     vibe: "cultural"    } },
+    { id: "culture_jerusalem",       query: "Jerusalem Old City market vibrant religious diverse",    tags: { budget: "mid-range", travelers: "couple",  interests: ["history", "religion"],         tripStyle: "cultural",  climate: "desert",        foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "culture_african_village", query: "African tribal ceremony traditional colorful dress",     tags: { budget: "mid-range", travelers: "solo",    interests: ["culture", "wildlife"],         tripStyle: "cultural",  climate: "tropical",      foodStyle: "local",       environment: "nature",       vibe: "cultural"    } },
+    { id: "culture_oktoberfest",     query: "Oktoberfest Bavaria beer festival traditional lederhosen",tags:{ budget: "mid-range", travelers: "friends", interests: ["festivals", "culture"],        tripStyle: "party",     climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "social"      } },
+    { id: "culture_indian_dance",    query: "Indian classical Bharatanatyam dance mudra costume",    tags: { budget: "mid-range", travelers: "couple",  interests: ["culture", "performing arts"],  tripStyle: "cultural",  climate: "tropical",      foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "culture_easter_island",   query: "Easter Island Moai stone statues dramatic volcanic",    tags: { budget: "mid-range", travelers: "solo",    interests: ["history", "adventure"],        tripStyle: "adventure", climate: "temperate",     foodStyle: "local",       environment: "nature",       vibe: "adventurous" } },
+  ],
 
-  {
-    id: "culture_middle_east_night",
-    query: "middle east night market lanterns arabic street culture",
-    tags: {
-      budget: "budget",
-      travelers: "family",
-      interests: ["arabic-culture", "food", "traditions"],
-      tripStyle: "cultural",
-      climate: "desert",
-      foodStyle: "street-food",
-      environment: "city",
-      vibe: "social"
-    },
-  },
-  {
-    id: "culture_japanese",
-    query: "japan temple kimono sakura traditional culture",
-    tags: {
-      budget: "luxury",
-      travelers: "couple",
-      interests: ["history", "culture", "photography"],
-      tripStyle: "cultural",
-      climate: "temperate",
-      foodStyle: "local",
-      environment: "city",
-      vibe: "peaceful"
-    },
-  },
-  {
-    id: "culture_indian",
-    query: "india colorful festival traditional dance culture",
-    tags: {
-      budget: "budget",
-      travelers: "friends",
-      interests: ["festivals", "culture", "music"],
-      tripStyle: "cultural",
-      climate: "tropical",
-      foodStyle: "local",
-      environment: "city",
-      vibe: "energetic"
-    },
-  },
-  {
-    id: "culture_ottoman",
-    query: "ottoman palace turkey istanbul historical interior",
-    tags: {
-      budget: "mid-range",
-      travelers: "couple",
-      interests: ["history", "architecture", "luxury"],
-      tripStyle: "cultural",
-      climate: "mediterranean",
-      foodStyle: "local",
-      environment: "city",
-      vibe: "elegant"
-    },
-  },
-  {
-    id: "culture_african",
-    query: "african tribe traditional clothing cultural heritage",
-    tags: {
-      budget: "budget",
-      travelers: "solo",
-      interests: ["culture", "history", "adventure"],
-      tripStyle: "cultural",
-      climate: "tropical",
-      foodStyle: "local",
-      environment: "nature",
-      vibe: "authentic"
-    },
-  },
-  {
-    id: "culture_european_oldtown",
-    query: "europe old town street architecture cafe culture",
-    tags: {
-      budget: "mid-range",
-      travelers: "couple",
-      interests: ["architecture", "cafes", "history"],
-      tripStyle: "cultural",
-      climate: "cold",
-      foodStyle: "fine-dining",
-      environment: "city",
-      vibe: "romantic"
-    },
-  },
-  {
-    id: "culture_mediterranean",
-    query: "mediterranean coastal village colorful cultural lifestyle",
-    tags: {
-      budget: "mid-range",
-      travelers: "family",
-      interests: ["culture", "sea", "food"],
-      tripStyle: "cultural",
-      climate: "mediterranean",
-      foodStyle: "seafood",
-      environment: "countryside",
-      vibe: "relaxing"
-    },
-  },
-  {
-    id: "culture_andalusian",
-    query: "andalusian palace arabic spanish islamic heritage",
-    tags: {
-      budget: "luxury",
-      travelers: "couple",
-      interests: ["islamic-history", "architecture", "culture"],
-      tripStyle: "cultural",
-      climate: "mediterranean",
-      foodStyle: "fine-dining",
-      environment: "city",
-      vibe: "luxurious"
-    },
-  }
+  // ── ACTIVITIES ───────────────────────────────────────────────────────────────
+  activities: [
+    { id: "act_hot_air_balloon",     query: "hot air balloon sunrise landscape aerial colorful",     tags: { budget: "mid-range", travelers: "couple",  interests: ["adventure", "photography"],    tripStyle: "adventure", climate: "temperate",     foodStyle: "local",       environment: "countryside",  vibe: "romantic"    } },
+    { id: "act_scuba_diving",        query: "scuba diving coral reef tropical colorful fish",        tags: { budget: "mid-range", travelers: "friends", interests: ["diving", "swimming"],          tripStyle: "adventure", climate: "tropical",      foodStyle: "seafood",     environment: "beach",        vibe: "adventurous" } },
+    { id: "act_mountain_biking",     query: "mountain biking trail downhill action dirt",            tags: { budget: "mid-range", travelers: "friends", interests: ["cycling", "sport"],            tripStyle: "adventure", climate: "temperate",     foodStyle: "local",       environment: "mountain",     vibe: "adventurous" } },
+    { id: "act_kayak_fjord",         query: "kayaking fjord dramatic reflection Norway mountains",   tags: { budget: "mid-range", travelers: "couple",  interests: ["kayaking", "nature"],          tripStyle: "adventure", climate: "cold",          foodStyle: "local",       environment: "nature",       vibe: "adventurous" } },
+    { id: "act_yoga_retreat",        query: "yoga retreat tropical sunrise serene mat outdoor",      tags: { budget: "mid-range", travelers: "solo",    interests: ["yoga", "wellness"],            tripStyle: "wellness",  climate: "tropical",      foodStyle: "vegan",       environment: "nature",       vibe: "peaceful"    } },
+    { id: "act_safari",              query: "safari jeep Africa elephant wildlife golden sunrise",   tags: { budget: "luxury",    travelers: "family",  interests: ["wildlife", "photography"],     tripStyle: "adventure", climate: "desert",        foodStyle: "local",       environment: "nature",       vibe: "adventurous" } },
+    { id: "act_skiing",              query: "skiing powder snow mountain resort alpine blue sky",    tags: { budget: "mid-range", travelers: "friends", interests: ["skiing", "snow"],              tripStyle: "adventure", climate: "cold",          foodStyle: "local",       environment: "mountain",     vibe: "adventurous" } },
+    { id: "act_surfing",             query: "surfing big wave ocean tube sport tropical",            tags: { budget: "budget",    travelers: "friends", interests: ["surfing", "sport"],            tripStyle: "adventure", climate: "tropical",      foodStyle: "local",       environment: "beach",        vibe: "adventurous" } },
+    { id: "act_rock_climbing",       query: "rock climbing cliff dramatic outdoor sport",            tags: { budget: "budget",    travelers: "friends", interests: ["climbing", "sport"],           tripStyle: "adventure", climate: "temperate",     foodStyle: "local",       environment: "mountain",     vibe: "adventurous" } },
+    { id: "act_paragliding",         query: "paragliding aerial mountain valley view soaring",       tags: { budget: "mid-range", travelers: "solo",    interests: ["adventure", "views"],          tripStyle: "adventure", climate: "temperate",     foodStyle: "local",       environment: "mountain",     vibe: "adventurous" } },
+    { id: "act_rafting",             query: "white water rafting river rapid adventure team",        tags: { budget: "mid-range", travelers: "friends", interests: ["rafting", "adventure"],        tripStyle: "adventure", climate: "temperate",     foodStyle: "local",       environment: "nature",       vibe: "adventurous" } },
+    { id: "act_cycling",             query: "cycling Tuscany countryside vineyard road scenic",      tags: { budget: "mid-range", travelers: "couple",  interests: ["cycling", "food"],             tripStyle: "relaxed",   climate: "mediterranean", foodStyle: "local",       environment: "countryside",  vibe: "peaceful"    } },
+    { id: "act_horseback",           query: "horseback riding beach sunset dramatic ocean",          tags: { budget: "mid-range", travelers: "couple",  interests: ["horse riding", "nature"],      tripStyle: "relaxed",   climate: "temperate",     foodStyle: "local",       environment: "beach",        vibe: "romantic"    } },
+    { id: "act_wine_tasting",        query: "wine tasting sommelier swirl vineyard cellar",          tags: { budget: "luxury",    travelers: "couple",  interests: ["wine", "gastronomy"],          tripStyle: "foodie",    climate: "mediterranean", foodStyle: "fine-dining", environment: "countryside",  vibe: "romantic"    } },
+    { id: "act_cooking_class",       query: "cooking class traditional local chef kitchen herbs",    tags: { budget: "mid-range", travelers: "couple",  interests: ["cooking", "culture"],          tripStyle: "cultural",  climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "act_music_festival",      query: "outdoor music festival crowd energy stage lights",      tags: { budget: "budget",    travelers: "friends", interests: ["music", "socializing"],        tripStyle: "party",     climate: "temperate",     foodStyle: "street-food", environment: "nature",       vibe: "social"      } },
+    { id: "act_whale_watching",      query: "whale watching ocean boat breaching dramatic",          tags: { budget: "mid-range", travelers: "family",  interests: ["wildlife", "ocean"],           tripStyle: "adventure", climate: "cold",          foodStyle: "seafood",     environment: "beach",        vibe: "adventurous" } },
+    { id: "act_stargazing",          query: "astrophotography milky way stars landscape dark sky",   tags: { budget: "budget",    travelers: "couple",  interests: ["photography", "astronomy"],    tripStyle: "relaxed",   climate: "desert",        foodStyle: "local",       environment: "nature",       vibe: "peaceful"    } },
+    { id: "act_snorkeling",          query: "snorkeling lagoon clear tropical fish colorful",        tags: { budget: "budget",    travelers: "family",  interests: ["swimming", "nature"],          tripStyle: "adventure", climate: "tropical",      foodStyle: "seafood",     environment: "beach",        vibe: "adventurous" } },
+    { id: "act_dog_sled",            query: "dog sledding Arctic winter dramatic forest trail",      tags: { budget: "luxury",    travelers: "couple",  interests: ["adventure", "wildlife"],       tripStyle: "adventure", climate: "cold",          foodStyle: "local",       environment: "nature",       vibe: "adventurous" } },
+    { id: "act_city_tour",           query: "cultural walking tour historic city guide architecture", tags: { budget: "budget",   travelers: "solo",    interests: ["history", "culture"],          tripStyle: "cultural",  climate: "temperate",     foodStyle: "local",       environment: "city",         vibe: "cultural"    } },
+    { id: "act_bungee",              query: "bungee jumping extreme bridge gorge dramatic sport",    tags: { budget: "mid-range", travelers: "friends", interests: ["extreme sport", "adventure"],  tripStyle: "adventure", climate: "temperate",     foodStyle: "local",       environment: "nature",       vibe: "adventurous" } },
+    { id: "act_scenic_train",        query: "scenic train journey mountains landscape window view",  tags: { budget: "mid-range", travelers: "couple",  interests: ["scenery", "travel"],           tripStyle: "relaxed",   climate: "cold",          foodStyle: "local",       environment: "mountain",     vibe: "peaceful"    } },
+    { id: "act_luxury_resort",       query: "luxury resort spa pool private beach service",         tags: { budget: "luxury",    travelers: "couple",  interests: ["luxury", "relaxation"],        tripStyle: "relaxed",   climate: "tropical",      foodStyle: "fine-dining", environment: "beach",        vibe: "luxurious"   } },
+    { id: "act_polar_expedition",    query: "polar expedition ice crossing Arctic dramatic ship",    tags: { budget: "luxury",    travelers: "solo",    interests: ["expedition", "photography"],   tripStyle: "adventure", climate: "cold",          foodStyle: "local",       environment: "nature",       vibe: "adventurous" } },
   ],
 }
 

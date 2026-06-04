@@ -1,183 +1,225 @@
 import { NextRequest, NextResponse } from "next/server"
-import { fetchEventbriteEvents } from "@/lib/eventbrite-fixed"
 import { getCountryCoordinates } from "@/lib/country-coordinates"
 import { eventCache, generateCacheKey } from "@/lib/cache"
 
+export const dynamic    = "force-dynamic"
+export const revalidate = 0
+
 interface EventRequest {
-  location?: string
-  countryCode?: string
-  startDate: string
-  endDate: string
-  userMood?: string
-  activityLevel?: string
+  location?:        string
+  countryCode?:     string
+  startDate:        string
+  endDate:          string
+  userMood?:        string
+  activityLevel?:   string
   userPreferences?: string[]
 }
 
-// Mapping of country names to ISO codes
+// Country name → ISO 2-letter code (all 24 destination countries + extras)
 const COUNTRY_NAME_TO_CODE: Record<string, string> = {
-  "Japan": "JP",
-  "Costa Rica": "CR",
-  "Greece": "GR",
-  "Morocco": "MA",
-  "Portugal": "PT",
-  "Thailand": "TH",
-  "New Zealand": "NZ",
-  "Brazil": "BR",
-  "Australia": "AU",
-  "Canada": "CA",
-  "United States": "US",
-  "France": "FR",
-  "Italy": "IT",
-  "Spain": "ES",
-  "Mexico": "MX",
-  "Singapore": "SG",
-  "India": "IN",
-  "Germany": "DE",
-  "United Kingdom": "GB",
-  "South Korea": "KR",
+  "Japan":                 "JP",
+  "France":                "FR",
+  "Italy":                 "IT",
+  "Spain":                 "ES",
+  "Greece":                "GR",
+  "Portugal":              "PT",
+  "Turkey":                "TR",
+  "Morocco":               "MA",
+  "Thailand":              "TH",
+  "Indonesia":             "ID",
+  "India":                 "IN",
+  "Vietnam":               "VN",
+  "Singapore":             "SG",
+  "United Arab Emirates":  "AE",
+  "Australia":             "AU",
+  "New Zealand":           "NZ",
+  "Brazil":                "BR",
+  "Mexico":                "MX",
+  "United States":         "US",
+  "Peru":                  "PE",
+  "Croatia":               "HR",
+  "Switzerland":           "CH",
+  "South Africa":          "ZA",
+  "Algeria":               "DZ",
+  // extras
+  "Costa Rica":   "CR",
+  "Canada":       "CA",
+  "Germany":      "DE",
+  "United Kingdom":"GB",
+  "South Korea":  "KR",
+  "China":        "CN",
+  "Argentina":    "AR",
+  "Chile":        "CL",
+  "Colombia":     "CO",
+  "Egypt":        "EG",
+  "Kenya":        "KE",
+  "Iceland":      "IS",
+  "Norway":       "NO",
+  "Sweden":       "SE",
+  "Denmark":      "DK",
+  "Finland":      "FI",
+  "Poland":       "PL",
+  "Czech Republic":"CZ",
+  "Hungary":      "HU",
+  "Romania":      "RO",
+  "Bulgaria":     "BG",
+  "Ireland":      "IE",
+  "Netherlands":  "NL",
+  "Cuba":         "CU",
+  "Jordan":       "JO",
+  "Cambodia":     "KH",
+  "Malaysia":     "MY",
+  "Philippines":  "PH",
+  "Sri Lanka":    "LK",
+  "Nepal":        "NP",
+  "Taiwan":       "TW",
+}
+
+// Maps country code to a searchable location string for Eventbrite
+const CODE_TO_LOCATION: Record<string, string> = {
+  JP: "Japan",           FR: "France",        IT: "Italy",
+  ES: "Spain",           GR: "Greece",        PT: "Portugal",
+  TR: "Turkey",          MA: "Morocco",       TH: "Thailand",
+  ID: "Indonesia",       IN: "India",         VN: "Vietnam",
+  SG: "Singapore",       AE: "United Arab Emirates", AU: "Australia",
+  NZ: "New Zealand",     BR: "Brazil",        MX: "Mexico",
+  US: "United States",   PE: "Peru",          HR: "Croatia",
+  CH: "Switzerland",     ZA: "South Africa",  DZ: "Algeria",
+  DE: "Germany",         GB: "United Kingdom",KR: "South Korea",
+  CN: "China",           AR: "Argentina",     CL: "Chile",
+  CO: "Colombia",        EG: "Egypt",         KE: "Kenya",
+  IS: "Iceland",         NO: "Norway",        SE: "Sweden",
+  DK: "Denmark",         FI: "Finland",       PL: "Poland",
+  CZ: "Czech Republic",  HU: "Hungary",       RO: "Romania",
+  BG: "Bulgaria",        IE: "Ireland",       NL: "Netherlands",
+  CU: "Cuba",            JO: "Jordan",        KH: "Cambodia",
+  MY: "Malaysia",        PH: "Philippines",   LK: "Sri Lanka",
+  NP: "Nepal",           TW: "Taiwan",
+}
+
+async function callEventbriteAPI(
+  countryCode: string,
+  startDate:   string,
+  endDate:     string
+): Promise<any[]> {
+  const apiKey = process.env.EVENTBRITE_API_KEY
+  if (!apiKey) {
+    console.warn("[events] EVENTBRITE_API_KEY not set — returning no events")
+    return []
+  }
+
+  const locationName = CODE_TO_LOCATION[countryCode] ?? countryCode
+  const start = new Date(startDate).toISOString()
+  const end   = new Date(endDate).toISOString()
+
+  const url = new URL("https://www.eventbriteapi.com/v3/events/search/")
+  url.searchParams.set("start_date.range_start", start)
+  url.searchParams.set("start_date.range_end",   end)
+  url.searchParams.set("sort_by",                "best")
+  url.searchParams.set("expand",                 "category,logo,venue")
+  url.searchParams.set("location.address",       locationName)
+
+  console.log(`[events] GET ${url.toString().split("?")[0]} — location="${locationName}" from=${startDate} to=${endDate}`)
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  })
+
+  console.log(`[events] Eventbrite response status: ${res.status}`)
+
+  if (!res.ok) {
+    const errText = await res.text()
+    console.error(`[events] Eventbrite HTTP ${res.status}: ${errText.slice(0, 300)}`)
+    return []
+  }
+
+  const data = await res.json()
+  const raw: any[] = data.events ?? []
+  console.log(`[events] Eventbrite returned ${raw.length} events`)
+  return raw
+}
+
+function normaliseEvents(raw: any[]): object[] {
+  return raw.slice(0, 12).map((e: any) => ({
+    id:             String(e.id ?? ""),
+    name:           String(e.name?.text ?? e.name ?? ""),
+    date:           e.start?.utc
+      ? new Date(e.start.utc).toISOString().split("T")[0]
+      : "",
+    location:       e.venue?.address?.localized_address_display
+                    ?? e.venue?.address?.city
+                    ?? "",
+    description:    (e.description?.text ?? "").substring(0, 200),
+    url:            String(e.url ?? ""),
+    category:       e.category?.name ?? "Event",
+    image:          e.logo?.url ?? undefined,
+    relevanceScore: 0.7 + Math.random() * 0.3,
+  }))
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: EventRequest = await request.json()
-    const { location, countryCode, startDate, endDate, userMood, activityLevel, userPreferences } = body
+    const { location, countryCode, startDate, endDate } = body
 
-    console.log("[v0] Events API request:", { location, countryCode, startDate, endDate })
+    console.log("[events] Request:", { location, countryCode, startDate, endDate })
 
-    // Validate required parameters
     if (!startDate || !endDate) {
       return NextResponse.json(
-        { error: "Missing required parameters: startDate, endDate" },
+        { error: "startDate and endDate are required" },
         { status: 400 }
       )
     }
 
-    // Determine country code from location or countryCode
-    let code = countryCode
-    
+    // Resolve country code
+    let code: string | undefined = countryCode
     if (!code && location) {
-      // Try to find country code from location name
       code = COUNTRY_NAME_TO_CODE[location]
-      if (!code) {
-        // Try exact match or partial match
-        code = Object.entries(COUNTRY_NAME_TO_CODE).find(
-          ([name]) => name.toLowerCase() === location.toLowerCase()
-        )?.[1]
-      }
+        ?? Object.entries(COUNTRY_NAME_TO_CODE).find(
+             ([name]) => name.toLowerCase() === location.toLowerCase()
+           )?.[1]
     }
 
     if (!code) {
-      console.log("[v0] No valid country code found, using fallback events")
-      // Return fallback events instead of error
+      console.warn(`[events] Cannot resolve country code for location="${location}" — no events`)
+      return NextResponse.json({ events: [], cached: false, count: 0 })
+    }
+
+    // Cache check
+    const cacheKey = generateCacheKey("events_v2", code, startDate, endDate)
+    const cached   = eventCache.get(cacheKey)
+    if (cached) {
+      console.log("[events] Returning cached events")
+      return NextResponse.json({ events: cached, cached: true, count: (cached as any[]).length })
+    }
+
+    const raw      = await callEventbriteAPI(code, startDate, endDate)
+    const events   = normaliseEvents(raw)
+
+    // Never return fake data — if Eventbrite returned nothing, surface that clearly
+    if (events.length === 0) {
+      console.log("[events] No live events found for this destination and date range")
       return NextResponse.json({
-        events: generateFallbackEvents(location || "Unknown", startDate, endDate),
-        cached: false,
-        country: location || "Unknown",
-        count: 3,
+        events:  [],
+        cached:  false,
+        count:   0,
+        message: "No live events found for this destination and date range",
       })
     }
 
-    console.log("[v0] Using country code:", code)
-
-    // Verify country code is valid
-    const countryCoords = getCountryCoordinates(code)
-    if (!countryCoords) {
-      console.log("[v0] Invalid country code, using fallback events")
-      return NextResponse.json({
-        events: generateFallbackEvents(location || code, startDate, endDate),
-        cached: false,
-        country: location || code,
-        count: 3,
-      })
-    }
-
-    // Check cache first
-    const cacheKey = generateCacheKey("events", code, startDate, endDate)
-    const cachedEvents = eventCache.get(cacheKey)
-    
-    if (cachedEvents) {
-      console.log("[v0] Returning cached events")
-      return NextResponse.json({
-        events: cachedEvents,
-        cached: true,
-        country: countryCoords.name,
-      })
-    }
-
-    // Fetch events for country using fixed Eventbrite client
-    console.log("[v0] Fetching events from fixed Eventbrite client")
-    const events = await fetchEventbriteEvents(
-      code,
-      startDate,
-      endDate
-    )
-
-    console.log("[v0] Fetched events:", events.length)
-
-    // If no events found, use fallback
-    if (!events || events.length === 0) {
-      console.log("[v0] No events found, using fallback")
-      const fallback = generateFallbackEvents(countryCoords.name, startDate, endDate)
-      eventCache.set(cacheKey, fallback)
-      return NextResponse.json({
-        events: fallback,
-        cached: false,
-        country: countryCoords.name,
-        count: fallback.length,
-      })
-    }
-
-    // Cache the result
     eventCache.set(cacheKey, events)
 
     return NextResponse.json({
-      events: events,
+      events,
       cached: false,
-      country: countryCoords.name,
-      count: events.length,
+      count:  events.length,
     })
   } catch (error) {
-    console.error("[v0] Error in events API:", error)
-    return NextResponse.json({
-      events: [],
-      cached: false,
-      error: "Failed to fetch events",
-    })
+    console.error("[events] Unhandled error:", error)
+    return NextResponse.json({ events: [], cached: false, error: "Events service unavailable" })
   }
-}
-
-function generateFallbackEvents(country: string, startDate: string, endDate: string) {
-  const eventDate = new Date(startDate).toDateString()
-  return [
-    {
-      id: "fallback-1",
-      name: "Cultural Festival",
-      date: eventDate,
-      location: country,
-      description: `Join us for a celebration of local culture and traditions in ${country}`,
-      url: "https://www.eventbrite.com",
-      category: "Culture",
-      relevanceScore: 0.8,
-    },
-    {
-      id: "fallback-2",
-      name: "Local Food Market",
-      date: eventDate,
-      location: country,
-      description: `Experience authentic cuisine and local food in ${country}`,
-      url: "https://www.eventbrite.com",
-      category: "Food",
-      relevanceScore: 0.75,
-    },
-    {
-      id: "fallback-3",
-      name: "Adventure Experience",
-      date: eventDate,
-      location: country,
-      description: `Outdoor adventure and activities in beautiful ${country}`,
-      url: "https://www.eventbrite.com",
-      category: "Adventure",
-      relevanceScore: 0.7,
-    },
-  ]
 }

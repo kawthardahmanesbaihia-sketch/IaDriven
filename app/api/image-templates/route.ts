@@ -9,7 +9,7 @@ import {
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 
-// ── Response shape (unchanged — component reads these fields) ─────────────────
+// ── Response shape ────────────────────────────────────────────────────────────
 interface FetchedTemplateImage {
   id: string
   templateId: string
@@ -29,33 +29,50 @@ interface UnsplashPhoto {
   photographer: string
 }
 
+// ── Compatibility shim for AbortSignal.timeout ────────────────────────────────
+// AbortSignal.timeout() was added in Node.js 17.3.
+// We reproduce the same behaviour with AbortController + setTimeout so the
+// route works on every Node.js version Next.js supports (≥16).
+function makeTimeoutSignal(ms: number): { signal: AbortSignal; clear: () => void } {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  return { signal: controller.signal, clear: () => clearTimeout(timer) }
+}
+
 // ── Core fetch helper ─────────────────────────────────────────────────────────
-// Returns ALL photos Unsplash sends back for one query (up to perPage).
-// One call → many photos; far fewer API hits than one-call-per-template.
 async function fetchUnsplashBatch(
   query: string,
   accessKey: string,
   perPage: number = 20
 ): Promise<UnsplashPhoto[]> {
+  const { signal, clear } = makeTimeoutSignal(8000)
   try {
-    // Pages 1–3 have the most relevant results for any given query
-    const page = Math.floor(Math.random() * 3) + 1
+    const page = Math.floor(Math.random() * 3) + 1   // pages 1-3 (less rate-limit pressure)
     const url = [
       "https://api.unsplash.com/search/photos",
       `?query=${encodeURIComponent(query)}`,
       `&per_page=${perPage}`,
       `&page=${page}`,
       "&orientation=landscape",
-      `&client_id=${accessKey}`,
     ].join("")
 
     const res = await fetch(url, {
+      headers: {
+        // Canonical Unsplash auth — header is preferred over ?client_id query param
+        Authorization: `Client-ID ${accessKey}`,
+        "Accept-Version": "v1",
+      },
       cache: "no-store",
-      signal: AbortSignal.timeout(8000),
+      signal,
     })
 
     if (!res.ok) {
-      console.warn(`[image-templates] Unsplash ${res.status} for "${query}"`)
+      // Read the body so we can log the actual Unsplash error message
+      let errBody = "(could not read body)"
+      try { errBody = await res.text() } catch {}
+      console.error(
+        `[image-templates] Unsplash HTTP ${res.status} for "${query}" — body: ${errBody.slice(0, 300)}`
+      )
       return []
     }
 
@@ -67,28 +84,39 @@ async function fetchUnsplashBatch(
     return photos.map((p: any) => ({
       id: p.id,
       regular: p.urls?.regular ?? p.urls?.full ?? "",
-      thumb: p.urls?.thumb ?? p.urls?.small ?? "",
-      alt: p.alt_description ?? p.description ?? null,
+      thumb:   p.urls?.thumb  ?? p.urls?.small ?? "",
+      alt:     p.alt_description ?? p.description ?? null,
       photographer: p.user?.name ?? "Unknown",
     }))
   } catch (err) {
-    console.warn(`[image-templates] Fetch failed for "${query}":`, String(err))
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[image-templates] Fetch error for "${query}": ${msg}`)
     return []
+  } finally {
+    clear()
   }
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
-  const accessKey = process.env.NEXT_PUBLIC_UNSPLASH_KEY
+  // Private server-only key (no NEXT_PUBLIC_ prefix — never sent to the browser)
+  const accessKey = process.env.UNSPLASH_ACCESS_KEY
+
   if (!accessKey) {
-    return NextResponse.json({ error: "Unsplash API key not configured" }, { status: 500 })
+    console.error("[image-templates] UNSPLASH_ACCESS_KEY is not set in environment variables")
+    return NextResponse.json(
+      { error: "Unsplash API key not configured. Set UNSPLASH_ACCESS_KEY in your .env file." },
+      { status: 500 }
+    )
   }
 
+  // Log first 8 chars so you can verify which key is active without exposing it
+  console.log(`[image-templates] Using key: ${accessKey.slice(0, 8)}…`)
+
   const { searchParams } = req.nextUrl
-  const count = Math.min(parseInt(searchParams.get("count") ?? "10"), 24)
+  const count = Math.min(parseInt(searchParams.get("count") ?? "10"), 30)
   const categoryFilter = searchParams.get("category") ?? ""
 
-  // Resolve the query pool for this category; fall back if unknown
   const queryPool: CategoryQueryEntry[] =
     CATEGORY_QUERY_POOLS[categoryFilter] ?? FALLBACK_QUERIES
 
@@ -99,23 +127,21 @@ export async function GET(req: NextRequest) {
   const seenIds = new Set<string>()
   const images: FetchedTemplateImage[] = []
 
-  // ── Sequential query loop ───────────────────────────────────────────────────
-  // Try each query in order. Stop as soon as we have `count` unique images.
-  // First query with per_page=20 normally yields 10+ immediately;
-  // subsequent queries act as automatic fallbacks.
-  for (const entry of queryPool) {
+  // Shuffle so each request draws from a random cross-section of subcategories
+  const shuffledPool = [...queryPool].sort(() => Math.random() - 0.5)
+
+  for (const entry of shuffledPool) {
     if (images.length >= count) break
 
-    const needed = count - images.length
-    // Fetch a buffer above what we need to absorb duplicates
+    const needed  = count - images.length
     const perPage = Math.min(needed + 10, 20)
-    const batch = await fetchUnsplashBatch(entry.query, accessKey, perPage)
+    const batch   = await fetchUnsplashBatch(entry.query, accessKey, perPage)
 
-    let addedFromQuery = 0
+    let added = 0
     for (const photo of batch) {
       if (images.length >= count) break
-      if (!photo.regular) continue           // skip photos with no URL
-      if (seenIds.has(photo.id)) continue    // deduplicate
+      if (!photo.regular) continue
+      if (seenIds.has(photo.id)) continue
 
       seenIds.add(photo.id)
       images.push({
@@ -128,20 +154,17 @@ export async function GET(req: NextRequest) {
         tags: entry.tags,
         query: entry.query,
       })
-      addedFromQuery++
+      added++
     }
 
     console.log(
-      `[image-templates] "${entry.query}" → +${addedFromQuery} unique` +
-        ` (${images.length}/${count} total | ${seenIds.size} IDs seen)`
+      `[image-templates] "${entry.query}" → +${added} (${images.length}/${count} total)`
     )
   }
 
-  // ── Final safety fallback ───────────────────────────────────────────────────
-  // If the entire category pool failed (rate limit, network error, etc.)
-  // try the generic fallback queries rather than returning an error.
+  // Final fallback — try generic queries if the category pool returned nothing
   if (images.length === 0 && queryPool !== FALLBACK_QUERIES) {
-    console.warn("[image-templates] Category pool exhausted with 0 results — trying fallback queries")
+    console.warn("[image-templates] Category pool returned 0 results — trying fallback queries")
     for (const entry of FALLBACK_QUERIES) {
       if (images.length >= count) break
       const batch = await fetchUnsplashBatch(entry.query, accessKey, 20)
@@ -164,19 +187,21 @@ export async function GET(req: NextRequest) {
   }
 
   if (images.length === 0) {
-    console.error(`[image-templates] All queries failed for category="${categoryFilter}"`)
-    return NextResponse.json({ error: "Failed to fetch any images" }, { status: 502 })
+    console.error(
+      `[image-templates] All queries failed for category="${categoryFilter}". ` +
+      "Check your UNSPLASH_ACCESS_KEY and Unsplash rate limits (50 req/hr on demo)."
+    )
+    return NextResponse.json(
+      { error: "Failed to fetch images. Check server logs for the Unsplash error details." },
+      { status: 502 }
+    )
   }
 
-  // Shuffle for visual variety across sessions
   images.sort(() => Math.random() - 0.5)
-
   const finalImages = images.slice(0, count)
 
   console.log(
-    `[image-templates] Done: ${finalImages.length} images returned` +
-      ` | ${seenIds.size} unique IDs processed` +
-      ` | category="${categoryFilter}"`
+    `[image-templates] Returning ${finalImages.length} images | ${seenIds.size} IDs seen | category="${categoryFilter}"`
   )
 
   return NextResponse.json({ images: finalImages, total: finalImages.length })
