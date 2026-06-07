@@ -400,9 +400,11 @@ export default function ResultsPage() {
         <motion.div
           key={`dest-${activeDestIndex}`}
           custom={slideDir}
-          initial={(dir: number) => ({ opacity: 0, x: dir > 0 ? 60 : -60 })}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          initial={((dir: number) => ({ opacity: 0, x: dir > 0 ? 60 : -60 })) as any}
           animate={{ opacity: 1, x: 0 }}
-          exit={(dir: number) => ({ opacity: 0, x: dir > 0 ? -60 : 60 })}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          exit={((dir: number) => ({ opacity: 0, x: dir > 0 ? -60 : 60 })) as any}
           transition={{ duration: 0.45, ease: [0.25, 0.46, 0.45, 0.94] }}
           className="min-h-screen"
         >
@@ -939,16 +941,16 @@ export default function ResultsPage() {
                       )}
                     </div>
 
-                    {loading && !hotels.length && !restaurants.length ? (
+                    {loading && !(hotels?.length) && !(restaurants?.length) ? (
                       <SectionLoader label="Loading hotels and restaurants…" />
                     ) : (
                       <div className="grid md:grid-cols-2 gap-6">
                         {/* Hotels */}
                         <div>
                           <h3 className="font-bold text-sm text-muted-foreground uppercase tracking-wide mb-3">🏨 Hotels</h3>
-                          {hotels.length > 0 ? (
+                          {(hotels?.length ?? 0) > 0 ? (
                             <div className="space-y-3">
-                              {hotels.slice(0, 5).map((h: any, i: number) => {
+                              {(hotels ?? []).slice(0, 5).map((h: any, i: number) => {
                                 const pl = h.priceLevel || h.style || "medium"
                                 const priceEmoji = pl === "low" || pl === "budget" ? "💵" : pl === "high" || pl === "luxury" ? "💎" : "💰"
                                 const priceLabel = pl === "low" || pl === "budget" ? "Budget" : pl === "high" || pl === "luxury" ? "Luxury" : "Mid-Range"

@@ -113,8 +113,6 @@ const DEST_CODES: Record<string, string> = {
   "dubrovnik": "DBV",  "split": "SPU",    "hvar": "SPU",     "zagreb": "ZAG",
   // Peru
   "lima": "LIM",       "cusco": "CUZ",    "machu picchu": "CUZ",
-  // Vietnam
-  "phuket": "HKT",
 }
 
 export function getDestinationCode(cityOrCountry: string): string | null {

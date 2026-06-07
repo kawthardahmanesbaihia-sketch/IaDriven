@@ -12,7 +12,9 @@
       "Bash(grep -E \"\\\\.\\(json|js|mjs|ts|tsx|rules\\)$\")",
       "WebSearch",
       "WebFetch(domain:developer.hotelbeds.com)",
-      "WebFetch(domain:www.altexsoft.com)"
+      "WebFetch(domain:www.altexsoft.com)",
+      "Bash(npx tsc *)",
+      "Bash(node test-scoring.mjs)"
     ]
   }
 }

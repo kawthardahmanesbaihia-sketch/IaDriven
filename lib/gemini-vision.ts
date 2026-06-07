@@ -15,6 +15,16 @@ import { GoogleGenerativeAI } from "@google/generative-ai"
 // more capable than 1.5-flash for travel psychology extraction.
 const GEMINI_MODEL = "gemini-2.0-flash"
 
+// ── Landmark detection result ─────────────────────────────────────────────────
+
+export interface LandmarkDetection {
+  detected: boolean
+  name: string | null       // e.g. "Petra Treasury" — landmark name when recognised
+  countryHint: string | null  // e.g. "Jordan" — country associated with landmark
+  regionHint: string | null   // e.g. "Middle East" — broad region
+  confidence: number          // 0.0 – 1.0
+}
+
 // ── Legacy shape (used by /api/analyze route) ─────────────────────────────────
 
 export interface GeminiImageAnalysis {
@@ -41,6 +51,7 @@ export interface TravelPreferenceAnalysis {
   architectureStyle: string[]
   culturalContext: string[]
   explorationStyle: string[]
+  environmentTypes: string[]   // physical environments visible in the image
   luxuryLevel: number
   natureLevel: number
   cityLevel: number
@@ -53,6 +64,13 @@ export interface TravelPreferenceAnalysis {
   foodExplorationAffinity: number
   familyFriendly: boolean
   confidenceLevel: number
+
+  // ── New dimensions (Step 2 of deep-analysis redesign) ─────────────────────
+  terrain?: string[]      // terrain character: mountainous, coastal, rocky, desert, forested, island, volcanic, polar, flat
+  cityStyle?: string[]    // urban aesthetic: futuristic, modern, historic, traditional, old-town, skyscraper, mixed
+  foodSignals?: string[]  // food culture: seafood, street-food, fine-dining, local-cuisine, asian-cuisine, mediterranean, spiced, grilled, tropical-fruits
+  mood?: string[]         // atmosphere alias for scoring: peaceful, vibrant, energetic, romantic, luxurious, spiritual, wild, remote, dramatic
+  landmark?: LandmarkDetection | null  // detected famous landmark — null when nothing recognised
 }
 
 // ── Extended destination-analysis shape (kept for backward compat) ────────────
@@ -203,52 +221,77 @@ export async function analyzeImagesWithGemini(
 // ── 2. Travel psychology analysis (used by /api/explore-analyze) ──────────────
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TRAVEL_PSYCHOLOGY_PROMPT = `You are a Travel Psychology + Visual Intelligence AI.
+const TRAVEL_PSYCHOLOGY_PROMPT = `You are a Travel Intelligence AI. Analyze this image across two passes simultaneously.
 
-Decode the TRAVEL PERSONALITY and DESIRED EXPERIENCE this image signals — not where it was taken.
+━━━ PASS 1 — LANDMARK & LOCATION DETECTION ━━━
+Scan the image for any world-famous landmark, natural wonder, or iconic recognisable place.
+Known examples (non-exhaustive — detect others confidently too):
+  Eiffel Tower → France | Petra Treasury / Al-Khazneh → Jordan | Taj Mahal → India
+  Burj Khalifa / Dubai skyline → UAE | Santorini caldera / blue domes → Greece
+  Mount Fuji → Japan | Matterhorn / Swiss Alps → Switzerland | Sagrada Família → Spain
+  Colosseum / Rome ruins → Italy | Ha Long Bay limestone karsts → Vietnam
+  Northern Lights / Aurora Borealis → Nordic (Iceland/Norway/Finland/Sweden)
+  Maasai Mara savanna with wildlife → Kenya | Serengeti plains → Tanzania
+  Table Mountain Cape Town → South Africa | Lofoten Islands red cabins → Norway
+  Ngorongoro Crater → Tanzania | Milford Sound fjords → New Zealand
+  Wadi Rum red canyon desert → Jordan | Dead Sea salt flats → Jordan
+  Moroccan medina / Jemaa el-Fna → Morocco | Blue City Chefchaouen → Morocco
+  Golden Temple Amritsar → India | Kerala backwaters → India | Varanasi Ghats → India
+  Bali rice terraces (Tegallalang) → Indonesia/Bali | Tanah Lot / Uluwatu → Bali
+  Wat Phra Kaew / Grand Palace → Thailand | Ayutthaya temples → Thailand
+  Jokulsarlon glacier lagoon → Iceland | Blue Lagoon Iceland → Iceland
+  Banff / Lake Louise / Moraine Lake → Canada | Trolltunga / Preikestolen → Norway
+  Sydney Opera House → Australia | Machu Picchu → Peru | Angkor Wat → Cambodia
 
-ABSOLUTE RULES — any violation breaks the system:
-1. NEVER name a specific country, nation, state, or city anywhere in your output.
-2. NEVER identify a specific landmark or monument by name.
-3. architectureStyle = the architectural STYLE (islamic, brutalist, gothic...) — NOT the location.
-4. culturalContext = the broad visual cultural aesthetic (north-african, east-asian...) — NOT a country.
-5. possibleRegions = broad geographic macro-region (North Africa, East Asia...) — NOT a country.
+RULES:
+- If a famous landmark is CLEARLY visible: set detected=true, name it precisely, give countryHint.
+- If uncertain or no landmark is visible: set detected=false, all other fields=null, confidence=0.
+- Do NOT invent landmark detections from generic scenery (mountains, beaches, forests).
+- Generic safaris without specific wildlife count markers = detected=false.
+- Confidence must reflect your certainty: a blurry Eiffel Tower = 0.7, crisp Petra = 0.98.
 
-ANALYZE THESE DIMENSIONS:
-- Visual atmosphere, mood, and lighting
-- Architectural character: style, scale, material, ornamentation
-- Cultural visual identity: what tradition does the aesthetic belong to?
-- Human presence and social energy
-- Natural vs built environment balance
-- Luxury / authenticity / budget indicators
-- Activity types and movement signals
-- Climate, season, and environmental cues
+━━━ PASS 2 — DEEP TRAVEL PREFERENCE EXTRACTION ━━━
+Extract the full travel preference signal this image conveys, independent of location.
+Analyze: physical environments, terrain, climate, activities, city character, architecture,
+food culture, mood, budget indicators, cultural aesthetic, and exploration style.
 
-Return ONLY valid JSON — no markdown, no code block, no explanation:
+Return ONLY valid JSON — no markdown, no explanation, no code block:
 {
-  "travelStyles": ["2-4 from: urban, cultural, luxury, adventure, nature, relaxed, romantic, social, spiritual, wellness, family, budget, backpacker, road-trip, coastal, foodie"],
-  "atmosphere": ["2-5 from: historical, monumental, ancient, sun-drenched, tropical, cozy, vibrant, serene, mystical, wild, glamorous, raw, modern, warm, cool, lively, peaceful, rugged, ethereal, dramatic"],
+  "landmark": {
+    "detected": <true|false>,
+    "name": <"landmark name" | null>,
+    "countryHint": <"country name" | null>,
+    "regionHint": <"broad region" | null>,
+    "confidence": <0.0-1.0>
+  },
+  "environmentTypes": ["0-6 physical environments VISUALLY PRESENT in the image: desert, dunes, sandy, beach, ocean, coastal, tropical-island, mountain, alpine, forest, jungle, lake, river, urban, city, countryside, volcanic, tundra, savanna, wildlife, grassland, bush, plains, rocky, canyon, glacier, valley, aurora, northern-lights, arctic, ice, hot-spring, fjord, highland, coral-reef, waterfall, steppe — describe ONLY what is physically visible"],
+  "terrain": ["1-3 from: flat, coastal, mountainous, rocky, desert, forested, island, volcanic, polar"],
+  "climatePreference": ["1-3 from: tropical, warm, hot, dry, humid, mediterranean, temperate, cold, snowy, arctic"],
+  "activities": ["2-5 from: food, history, shopping, hiking, beach, diving, skiing, nightlife, museums, wellness, photography, cycling, water-sports, festivals, cooking, yoga, sailing, trekking, camping, off-road, safari, wildlife-viewing, game-drive, surfing, snorkeling, road-trip"],
+  "travelStyles": ["2-4 from: urban, cultural, luxury, adventure, nature, relaxed, romantic, social, spiritual, wellness, family, budget, backpacker, road-trip, coastal, foodie, wildlife, safari, photography"],
+  "cityStyle": ["0-3 from: futuristic, modern, historic, traditional, old-town, skyscraper, mixed — EMPTY ARRAY if no significant urban area visible"],
+  "architectureStyle": ["0-3 from: islamic, moorish, gothic, baroque, classical, roman, renaissance, modernist, futurist, traditional, mediterranean, japanese, east-asian, south-asian, mughal, colonial, nordic, vernacular, tropical, cycladic, art-nouveau, nabataean, indo-islamic — EMPTY ARRAY if no architecture visible"],
+  "foodSignals": ["0-3 from: seafood, street-food, fine-dining, local-cuisine, asian-cuisine, mediterranean, spiced, grilled, tropical-fruits — EMPTY ARRAY if no food signals visible"],
+  "mood": ["2-4 from: peaceful, vibrant, energetic, romantic, luxurious, spiritual, wild, remote, dramatic, ancient, mystical, modern, cozy, sun-drenched, ethereal, rugged"],
+  "atmosphere": ["2-4 from: historical, monumental, ancient, sun-drenched, tropical, cozy, vibrant, serene, mystical, wild, glamorous, raw, modern, warm, cool, lively, peaceful, rugged, ethereal, dramatic"],
   "emotionalVibe": ["1-3 from: inspired, curious, adventurous, peaceful, romantic, energized, contemplative, excited, nostalgic, awestruck, free, grounded, exhilarated"],
-  "architectureStyle": ["0-3 from: islamic, gothic, baroque, modernist, brutalist, traditional, mediterranean, japanese-traditional, art-deco, minimalist, colonial, moorish, ottoman, vernacular, tropical, cycladic, mughal, roman-classical, futuristic, art-nouveau, north-african, indo-islamic — EMPTY ARRAY if no significant architecture"],
-  "culturalContext": ["0-2 from: north-african, east-asian, south-asian, middle-eastern, western-european, mediterranean-coastal, tropical-asian, latin-american, nordic, sub-saharan, island-tropical — describe the visual cultural aesthetic only — EMPTY if not clearly evident"],
+  "culturalContext": ["0-2 from: north-african, east-asian, south-asian, middle-eastern, western-european, mediterranean-coastal, tropical-asian, latin-american, nordic, sub-saharan, island-tropical — EMPTY if not clearly evident"],
   "explorationStyle": ["1-2 from: deep-dive, wandering, guided-tour, spontaneous, structured, slow-travel, immersive, off-beaten-path"],
-  "activities": ["2-5 from: food, history, shopping, hiking, beach, diving, skiing, nightlife, museums, wellness, photography, cycling, water-sports, festivals, cooking, yoga, sailing, trekking"],
-  "budgetLevel": "low|medium|high|ultra",
-  "climatePreference": ["1-3 from: tropical, warm, temperate, cold, desert, snowy, mediterranean"],
+  "possibleRegions": ["0-2 from: Mediterranean, Western Europe, Eastern Europe, North Africa, Middle East, East Asia, Southeast Asia, South Asia, Caribbean, South America, Nordic, Oceania, Sub-Saharan Africa, East Africa — EMPTY if no clear geographic context"],
   "travelType": "solo|couple|friends|family",
-  "possibleRegions": ["0-2 from: Mediterranean, Western Europe, Eastern Europe, North Africa, Middle East, East Asia, Southeast Asia, South Asia, Caribbean, South America, Nordic, Oceania — EMPTY if no clear geographic visual context"],
+  "budgetLevel": "low|medium|high|ultra",
   "luxuryLevel": <integer 0-100>,
   "natureLevel": <integer 0-100>,
   "cityLevel": <integer 0-100>,
   "relaxationLevel": <integer 0-100>,
   "adventureLevel": <integer 0-100>,
   "socialLevel": <integer 0-100>,
-  "familyFriendly": <true|false>,
   "nightlifeInterest": <integer 0-100>,
   "culturalInterest": <integer 0-100>,
   "romanticAffinity": <integer 0-100>,
   "foodExplorationAffinity": <integer 0-100>,
-  "confidenceLevel": <float 0.0-1.0: how confidently you read this image>
+  "familyFriendly": <true|false>,
+  "confidenceLevel": <float 0.0-1.0: overall analysis confidence>
 }`
 
 async function analyzeImageForTravel(
@@ -283,33 +326,39 @@ async function analyzeImageForTravel(
     const text = result.response.text()
 
     console.log(
-      `[Gemini Travel] Image ${index + 1} responded in ${ms}ms | ` +
-      `raw (first 300): ${text.slice(0, 300)}`
+      `[Vision] Image ${index + 1} responded in ${ms}ms | raw (first 300): ${text.slice(0, 300)}`
     )
 
     const parsed = parseGeminiJson<TravelPreferenceAnalysis>(text)
     if (!parsed) {
-      console.error(`[Gemini Travel] Image ${index + 1}: JSON parse failed | full text: ${text.slice(0, 500)}`)
+      console.error(`[Vision] Image ${index + 1} Analysis Failed — JSON parse error | full: ${text.slice(0, 500)}`)
+      console.log(`[Vision] Fallback Activated for image ${index + 1}`)
       return null
     }
 
+    const lm = parsed.landmark
+    const landmarkLog = lm?.detected
+      ? `LANDMARK=${lm.name} (${lm.countryHint}, conf=${lm.confidence?.toFixed(2)})`
+      : "landmark=none"
+
     console.log(
-      `[Gemini Travel] Image ${index + 1} parsed OK | ` +
+      `[Vision] Image ${index + 1} Analysis Success | ${landmarkLog} | ` +
+      `env=${JSON.stringify(parsed.environmentTypes)} | ` +
+      `terrain=${JSON.stringify(parsed.terrain ?? [])} | ` +
+      `cityStyle=${JSON.stringify(parsed.cityStyle ?? [])} | ` +
       `styles=${JSON.stringify(parsed.travelStyles)} | ` +
+      `activities=${JSON.stringify(parsed.activities)} | ` +
       `arch=${JSON.stringify(parsed.architectureStyle)} | ` +
       `culture=${JSON.stringify(parsed.culturalContext)} | ` +
       `regions=${JSON.stringify(parsed.possibleRegions)} | ` +
-      `budget=${parsed.budgetLevel} | luxury=${parsed.luxuryLevel} | ` +
-      `culture_score=${parsed.culturalInterest} | adventure=${parsed.adventureLevel} | ` +
-      `confidence=${parsed.confidenceLevel}`
+      `budget=${parsed.budgetLevel} | luxury=${parsed.luxuryLevel} | confidence=${parsed.confidenceLevel}`
     )
 
     return parsed
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
-    console.error(
-      `[Gemini Travel] Image ${index + 1} FAILED | model=${GEMINI_MODEL} | error: ${msg}`
-    )
+    console.error(`[Vision] Image ${index + 1} Analysis Failed | model=${GEMINI_MODEL} | error: ${msg}`)
+    console.log(`[Vision] Fallback Activated for image ${index + 1}`)
     if (error instanceof Error && error.stack) console.error(error.stack)
     return null
   }
@@ -319,9 +368,7 @@ export async function analyzeImagesForTravel(
   imageUrls: string[]
 ): Promise<Array<TravelPreferenceAnalysis | null>> {
   const limited = imageUrls.slice(0, 5)
-  console.log(
-    `[Gemini Travel] analyzeImagesForTravel: ${limited.length} image(s) | model=${GEMINI_MODEL}`
-  )
+  console.log(`[Vision] analyzeImagesForTravel: ${limited.length} image(s) | model=${GEMINI_MODEL}`)
   return Promise.all(limited.map((url, i) => analyzeImageForTravel(url, i)))
 }
 

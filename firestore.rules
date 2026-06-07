@@ -3,11 +3,64 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Sessions collection — allow any authenticated or anonymous client
-    // to read and write their own session documents.
-    match /sessions/{sessionId} {
-      allow read, write: if true;
+    // ── Travel sessions (single-mode) ─────────────────────────────────────────
+    match /travel_sessions/{sessionId} {
+      allow create: if isValidTravelSession(request.resource.data);
+      allow read:   if true;
+      allow update: if request.resource.data.sessionId == resource.data.sessionId
+                    && isValidTravelSession(request.resource.data);
+      allow delete: if false;
     }
 
+    // ── Itineraries ───────────────────────────────────────────────────────────
+    match /itineraries/{itineraryId} {
+      allow create: if isValidItinerary(request.resource.data);
+      allow read:   if true;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // ── Multiplayer sessions (root-level docs, ID = 6-char uppercase code) ───
+    match /{sessionId} {
+      allow create: if isMultiplayerCode(sessionId)
+                    && isValidMultiplayerSession(request.resource.data);
+      allow read:   if isMultiplayerCode(sessionId);
+      allow update: if isMultiplayerCode(sessionId)
+                    && resource.data.sessionId == request.resource.data.sessionId
+                    && resource.data.status != 'closed';
+      allow delete: if false;
+    }
+
+    // ── Validation functions ──────────────────────────────────────────────────
+
+    function isValidTravelSession(data) {
+      return data.keys().hasAll(['sessionId', 'createdAt', 'selectedImages'])
+          && data.sessionId is string
+          && data.sessionId.size() > 0 && data.sessionId.size() < 100
+          && data.createdAt is number
+          && data.selectedImages is list
+          && data.selectedImages.size() <= 20;
+    }
+
+    function isValidItinerary(data) {
+      return data.keys().hasAll(['itineraryId', 'destination', 'days'])
+          && data.itineraryId is string
+          && data.destination is string
+          && data.days is list
+          && data.days.size() <= 21;
+    }
+
+    function isValidMultiplayerSession(data) {
+      return data.keys().hasAll(['sessionId', 'host', 'players', 'status'])
+          && data.sessionId is string
+          && data.host is string
+          && data.players is list
+          && data.players.size() <= 10
+          && data.status in ['lobby', 'selecting', 'analyzing', 'results', 'closed'];
+    }
+
+    function isMultiplayerCode(id) {
+      return id.matches('[A-Z0-9]{6}');
+    }
   }
 }

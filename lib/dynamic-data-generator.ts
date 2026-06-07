@@ -165,39 +165,6 @@ export function generateDynamicHotels(
 ): DynamicHotel[] {
   console.warn("[dynamic-data-generator] generateDynamicHotels removed — use lib/hotelbeds-client.ts")
   return []
-  // eslint-disable-next-line no-unreachable
-  const countryData = COUNTRY_DATA[_countryName]
-  if (!countryData) return []
-
-  const hotels: DynamicHotel[] = []
-  const usedIndices = new Set<number>()
-
-  for (let i = 0; i < count; i++) {
-    // Use seed to generate pseudo-random but deterministic indices
-    const nameIndex = (seed + i * 17) % countryData.hotelNames.length
-    const cityIndex = (seed + i * 23) % countryData.hotelCities.length
-    const styleIndex = (seed + i * 31) % countryData.hotelStyles.length
-    
-    const name = countryData.hotelNames[nameIndex]
-    const city = countryData.hotelCities[cityIndex]
-    const style = countryData.hotelStyles[styleIndex]
-    
-    // Vary price levels
-    const priceLevel = ["$", "$$", "$$$", "$$$$"][(seed + i * 7) % 4]
-    const rating = 3.8 + (((seed + i * 11) % 20) / 100)
-    
-    hotels.push({
-      name: `${name} ${city}`,
-      rating: Math.min(4.9, Math.round(rating * 100) / 100),
-      location: city,
-      category: style,
-      price_level: priceLevel,
-      style,
-      activity_level: ["Relaxed", "Moderate", "Active"][(seed + i * 13) % 3],
-    })
-  }
-
-  return hotels
 }
 
 /** @deprecated Returns [] — use lib/google-places.ts */
@@ -208,35 +175,6 @@ export function generateDynamicRestaurants(
 ): DynamicRestaurant[] {
   console.warn("[dynamic-data-generator] generateDynamicRestaurants removed — use lib/google-places.ts")
   return []
-  // eslint-disable-next-line no-unreachable
-  const countryData = COUNTRY_DATA[_countryName]
-  if (!countryData) return []
-
-  const restaurants: DynamicRestaurant[] = []
-
-  for (let i = 0; i < count; i++) {
-    const nameIndex = (seed + i * 19) % countryData.restaurantNames.length
-    const cityIndex = (seed + i * 29) % countryData.restaurantCities.length
-    const cuisineIndex = (seed + i * 37) % countryData.cuisines.length
-    
-    const name = countryData.restaurantNames[nameIndex]
-    const city = countryData.restaurantCities[cityIndex]
-    const cuisine = countryData.cuisines[cuisineIndex]
-    
-    const rating = 4.0 + (((seed + i * 11) % 90) / 100)
-    const categories = ["Fine Dining", "Casual", "Street Food", "Farm-to-table"]
-    const category = categories[(seed + i * 7) % categories.length]
-    
-    restaurants.push({
-      name: `${name} ${city}`,
-      rating: Math.min(4.9, Math.round(rating * 100) / 100),
-      location: city,
-      cuisine,
-      category,
-    })
-  }
-
-  return restaurants
 }
 
 /** @deprecated Returns [] — use lib/hotelbeds-client.ts or lib/gemini-client.ts */
@@ -247,33 +185,4 @@ export function generateDynamicActivities(
 ): DynamicActivity[] {
   console.warn("[dynamic-data-generator] generateDynamicActivities removed — use lib/hotelbeds-client.ts")
   return []
-  // eslint-disable-next-line no-unreachable
-  const countryData = COUNTRY_DATA[_countryName]
-  if (!countryData) return []
-
-  const activities: DynamicActivity[] = []
-
-  for (let i = 0; i < count; i++) {
-    const typeIndex = (seed + i * 41) % countryData.activityTypes.length
-    const activityType = countryData.activityTypes[typeIndex]
-    
-    const descriptions = countryData.activityDescriptions[activityType] || [
-      `Experience ${activityType.toLowerCase()} in ${countryName}`,
-      `Explore local ${activityType.toLowerCase()} attractions`,
-      `Guided ${activityType.toLowerCase()} tour and adventure`,
-    ]
-    
-    const descIndex = (seed + i * 13) % descriptions.length
-    
-    const durations = ["2-3 hours", "Half day", "Full day", "3-4 hours"]
-    const durationIndex = (seed + i * 7) % durations.length
-    
-    activities.push({
-      title: `${activityType} Experience ${i + 1}`,
-      description: descriptions[descIndex],
-      duration: durations[durationIndex],
-    })
-  }
-
-  return activities
 }

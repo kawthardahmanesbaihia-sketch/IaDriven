@@ -125,7 +125,7 @@
   }
   body {
     @apply bg-background text-foreground;
-    /* Smooth theme switch — scoped to body so framer-motion animations aren't affected */
+    /* Smooth theme switch - scoped to body so framer-motion animations aren't affected */
     transition: background-color 250ms ease, color 250ms ease;
   }
   /* Propagate smooth bg/border/text transitions to all layout containers */

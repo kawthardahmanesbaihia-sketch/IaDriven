@@ -1,443 +1,218 @@
+/**
+ * /api/analyze — Single-mode destination recommendation
+ *
+ * Pipeline (CLIP-ONLY — no fallbacks, no template tags, no Gemini):
+ *   Image URLs
+ *     → CLIP (Xenova/clip-vit-base-patch32) zero-shot classification
+ *     → Geographic Reasoning Engine (landmark detection + environment elimination)
+ *     → Destination ranking + squad bonus
+ *     → Top 3 destinations
+ *
+ * templateTags and other image metadata are IGNORED — the image itself is
+ * the sole input to the recommendation engine.
+ */
+
 import { type NextRequest, NextResponse } from "next/server"
-import { analyzePreferences, createPreferenceProfile } from "@/lib/preferences-analyzer"
-import { getTopDestinations, getCityRecommendations, type DestinationMatch } from "@/lib/destination-matcher"
-import { ImageMetadata } from "@/lib/image-generator"
-import { generateSeed, shuffleArrayWithSeed } from "@/lib/seed-randomizer"
-import { getEnhancedDestinationDetails } from "@/lib/destination-enhancer"
-import { destinationCache, generateCacheKey } from "@/lib/cache"
+import { generateSeed } from "@/lib/seed-randomizer"
 import {
-  analyzeImagesWithGemini,
-  analyzeProfileWithGemini,
-  geminiToImageMetadata,
-  type GeminiImageAnalysis,
-} from "@/lib/gemini-vision"
+  EXPLORE_DESTINATIONS,
+} from "@/lib/explore-destinations"
+import { DESTINATIONS } from "@/lib/travel-data"
+import { rankDestinationsByCLIP } from "@/lib/clip-scorer"
+import { prewarm } from "@/lib/clip-service"
+import { prewarmTextEmbeddings } from "@/lib/clip-scorer"
 import {
-  accumulateScore,
-  buildTravelProfile,
-  createEmptyScores,
-  profileToPrompt,
-} from "@/lib/preference-scorer"
-import { fetchCountryImages } from "@/lib/country-image-generator"
+  parseBody,
+  checkRateLimit,
+  getClientIp,
+  rateLimitResponse,
+  AnalyzeBodySchema,
+} from "@/lib/request-validation"
 
-// ─── Gemini-independent text summary ─────────────────────────────────────────
+// Pre-warm CLIP and text embeddings before the first request
+prewarm()
+prewarmTextEmbeddings().catch(() => {})
 
-const generateSummary = (destinations: any[], language: string): string => {
-  const topDest = destinations[0]
-  if (!topDest) return "No destinations found"
-
-  if (language === "fr") {
-    return `Basé sur vos préférences, ${topDest.countryName} est votre destination idéale.`
-  }
-  if (language === "ar") {
-    return `بناءً على تفضيلاتك، ${topDest.countryName} هي الوجهة المناسبة لك.`
-  }
-  return `Based on your preferences, ${topDest.countryName} is a perfect match for you.`
+// ── Destination ID → ISO 2-letter code (for flag emoji in UI) ────────────────
+const DEST_TO_ISO: Record<string, string> = {
+  japan: "JP", france: "FR", thailand: "TH", italy: "IT",
+  morocco: "MA", greece: "GR", spain: "ES", dubai: "AE",
+  vietnam: "VN", india: "IN", bali: "ID", maldives: "MV",
+  switzerland: "CH", newzealand: "NZ", jordan: "JO", iceland: "IS",
+  norway: "NO", southafrica: "ZA", finland: "FI", sweden: "SE",
+  canada: "CA", kenya: "KE", tanzania: "TZ", seychelles: "SC",
+  australia: "AU", portugal: "PT", turkey: "TR", egypt: "EG",
+  peru: "PE", southkorea: "KR", singapore: "SG", netherlands: "NL",
+  croatia: "HR", nepal: "NP", mexico: "MX", cuba: "CU",
+  costarica: "CR", botswana: "BW", namibia: "NA",
+  cambodia: "KH", czechrepublic: "CZ", brazil: "BR", colombia: "CO",
+  srilanka: "LK", philippines: "PH", georgia: "GE", malaysia: "MY",
+  austria: "AT", ireland: "IE",
+  // Second expansion batch
+  denmark: "DK", belgium: "BE", germany: "DE", hungary: "HU", poland: "PL",
+  unitedkingdom: "GB", scotland: "GB", saudiarabia: "SA", qatar: "QA", oman: "OM",
+  lebanon: "LB", madagascar: "MG", mauritius: "MU", china: "CN", bhutan: "BT",
+  unitedstates: "US", alaska: "US", argentina: "AR", chile: "CL",
+  dominicanrepublic: "DO", jamaica: "JM", bahamas: "BS", borabora: "PF",
+  fiji: "FJ", hawaii: "US", greenland: "GL", antarctica: "AQ", mongolia: "MN",
+  armenia: "AM", uzbekistan: "UZ", romania: "RO", bulgaria: "BG",
+  slovenia: "SI", slovakia: "SK", estonia: "EE", latvia: "LV", lithuania: "LT",
+  tunisia: "TN", algeria: "DZ", rwanda: "RW", ethiopia: "ET",
+  zimbabwe: "ZW", zambia: "ZM", panama: "PA", ecuador: "EC",
+  bolivia: "BO", guatemala: "GT", nicaragua: "NI", laos: "LA", hongkong: "HK",
 }
 
-// ─── Per-destination card summary ────────────────────────────────────────────
-// Derives a short 1-line description from already-computed destination data.
-// No extra AI calls needed — runs purely from scoring output.
+// ── Response helpers ──────────────────────────────────────────────────────────
 
-function buildCardSummary(dest: DestinationMatch, dominantMood: string): string {
-  const acts = dest.activities.slice(0, 2).filter(s => s.length < 40)
-  if (acts.length >= 2) return `${acts[0]} · ${acts[1]}`
-  if (acts.length === 1 && dest.positives[0]) return `${acts[0]} · ${dest.positives[0]}`
-  if (dest.positives.length >= 2) return `${dest.positives[0]} · ${dest.positives[1]}`
-  if (dest.positives.length === 1) return dest.positives[0]
-  return `${dominantMood.charAt(0).toUpperCase() + dominantMood.slice(1)} destination with unforgettable experiences`
+function priceToStyle(priceLevel: string): "budget" | "mid-range" | "luxury" {
+  if (priceLevel === "luxury") return "luxury"
+  if (priceLevel === "mid-range") return "mid-range"
+  return "budget"
 }
 
-// ─── BLIP fallback (used only when GEMINI_API_KEY is absent) ─────────────────
-// Keeps the app working even without a Gemini key.
-
-const BLIP_MODEL =
-  "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base"
-const MAX_RETRIES = 3
-const RETRY_DELAY_MS = 8000
-
-async function callBLIP(body: Blob): Promise<string> {
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const res = await fetch(BLIP_MODEL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
-        "Content-Type": "application/octet-stream",
-      },
-      body,
-    })
-
-    if (res.ok) {
-      const text = await res.text()
-      try {
-        const data = JSON.parse(text)
-        return Array.isArray(data) && data[0]?.generated_text
-          ? (data[0].generated_text as string)
-          : ""
-      } catch {
-        return ""
-      }
-    }
-
-    if (res.status === 429) {
-      console.warn("[BLIP] Rate limit exceeded")
-      break
-    }
-
-    if (res.status === 503) {
-      const errText = await res.text()
-      let errData: any = {}
-      try { errData = JSON.parse(errText) } catch {}
-      const wait = (errData.estimated_time ?? RETRY_DELAY_MS / 1000) * 1000
-      console.log(`[BLIP] Model loading, retrying in ${wait}ms (attempt ${attempt + 1})`)
-      await new Promise((r) => setTimeout(r, Math.min(wait, 30_000)))
-      continue
-    }
-
-    console.error("[BLIP] API error:", res.status)
-    break
-  }
-  return ""
+function buildSummary(destinations: Array<{ name: string }>, language: string): string {
+  const top = destinations[0]
+  if (!top) return "No destinations found"
+  if (language === "fr") return `Basé sur vos préférences visuelles, ${top.name} est votre destination idéale.`
+  if (language === "ar") return `بناءً على تفضيلاتك المرئية، ${top.name} هي الوجهة المناسبة لك.`
+  return `Based on your visual preferences, ${top.name} is a perfect match for you.`
 }
 
-async function blipCaptionToMetadata(imageUrl: string): Promise<Partial<ImageMetadata> | null> {
-  try {
-    let body: Blob
-    if (imageUrl.startsWith("data:")) {
-      const base64 = imageUrl.split(",")[1]
-      body = new Blob([Buffer.from(base64, "base64")])
-    } else {
-      const res = await fetch(imageUrl)
-      if (!res.ok) return null
-      body = await res.blob()
-    }
+// ─────────────────────────────────────────────────────────────────────────────
 
-    const caption = await callBLIP(body)
-    if (!caption) return null
-
-    const c = caption.toLowerCase()
-    const keywords = [
-      "beach", "ocean", "sea", "waves", "sand", "sunset", "sunrise",
-      "mountain", "hiking", "snow", "ski", "forest", "waterfall",
-      "city", "street", "building", "architecture", "museum", "castle",
-      "restaurant", "food", "market", "cafe", "temple", "church",
-      "desert", "safari", "jungle", "lake", "river", "island",
-      "village", "countryside", "vineyard", "garden", "park",
-      "shopping", "night", "festival", "people", "harbour",
-    ]
-    const tags = keywords.filter((k) => c.includes(k))
-
-    let mood = "adventurous"
-    if (c.match(/beach|ocean|sea|sunset|tropical|relax|calm|peaceful/)) mood = "relaxed"
-    else if (c.match(/museum|castle|temple|church|historical|old|ancient|ruin/)) mood = "cultural"
-    else if (c.match(/luxury|resort|spa|hotel|fine dining|elegant/)) mood = "luxury"
-    else if (c.match(/mountain|hiking|trek|adventure|climb|sport/)) mood = "adventurous"
-    else if (c.match(/forest|lake|nature|quiet|serene/)) mood = "calm"
-
-    let climate = "temperate"
-    if (c.match(/beach|ocean|tropical|palm|hot|humid|warm|sunny/)) climate = "tropical"
-    else if (c.match(/snow|winter|cold|ice|ski|frozen|blizzard/)) climate = "cold"
-    else if (c.match(/desert|sand|dry|arid|dune|barren/)) climate = "desert"
-
-    let environment = "nature"
-    if (c.match(/city|street|building|urban|downtown|skyscraper|tower/)) environment = "urban"
-    else if (c.match(/beach|ocean|sea|coast|waves|island|shore/)) environment = "beach"
-    else if (c.match(/mountain|peak|summit|cliff|hill|alpine/)) environment = "mountain"
-    else if (c.match(/forest|jungle|trees|woodland/)) environment = "forest"
-    else if (c.match(/desert|dune|arid/)) environment = "desert"
-    else if (c.match(/temple|church|museum|castle|historical|ruin/)) environment = "cultural"
-
-    let activity_level: "low" | "medium" | "high" = "medium"
-    if (c.match(/hiking|climbing|skiing|surfing|adventure|trek|sport|running|kayak/)) {
-      activity_level = "high"
-    } else if (c.match(/beach|relax|resort|spa|sunset|lying|sitting|lounging/)) {
-      activity_level = "low"
-    }
-
-    let food_style = "local"
-    if (c.match(/restaurant|fine dining|gourmet|chef|elegant dinner/)) food_style = "fine_dining"
-    else if (c.match(/market|street food|vendor|stall|bazaar/)) food_style = "street_food"
-    else if (c.match(/seafood|fish|shrimp|lobster|harbour/)) food_style = "seafood"
-    else if (c.match(/cafe|coffee|bakery|pastry|brunch/)) food_style = "cafe"
-    else if (c.match(/beach|tropical|island/)) food_style = "seafood"
-
-    return { tags, mood, climate, environment, activity_level, food_style }
-  } catch (err) {
-    console.error("[BLIP] Error:", err)
-    return null
-  }
-}
-
-// ─── Safe defaults ────────────────────────────────────────────────────────────
-// analyzePreferences() iterates metadata.tags — every field must be populated.
-
-const METADATA_DEFAULTS: ImageMetadata = {
-  tags: [],
-  mood: "adventurous",
-  climate: "temperate",
-  environment: "nature",
-  activity_level: "medium",
-  food_style: "local",
-}
-
-function tripStyleToLevel(tripStyle?: string): "low" | "medium" | "high" {
-  if (tripStyle === "adventure" || tripStyle === "party") return "high"
-  if (tripStyle === "relaxed" || tripStyle === "wellness") return "low"
-  return "medium"
-}
-
-// ─── Companion-type destination bonuses ──────────────────────────────────────
-// Added to confidenceScore after ranking so solo/couple/friends/family context
-// nudges results toward the most fitting destinations.
-const COMPANION_BONUS: Record<string, Record<string, number>> = {
-  solo:    { JP: 4, VN: 4, MA: 3, TH: 3, IN: 3, ID: 2, GR: 2, ES: 2, PT: 2, AU: 2, NZ: 2, FR: 1, IT: 1, AE: 0 },
-  couple:  { GR: 5, FR: 5, IT: 5, ID: 4, AE: 3, ES: 3, JP: 2, TH: 2, MA: 1, VN: 1, PT: 2, CH: 3, IN: 1 },
-  friends: { ES: 6, TH: 5, GR: 4, VN: 4, ID: 3, MA: 3, IN: 2, JP: 2, IT: 2, AE: 2, FR: 1, BR: 3, MX: 3 },
-  family:  { IT: 4, JP: 3, FR: 3, AE: 2, ES: 2, GR: 2, TH: 2, AU: 3, SG: 3, ID: 1, VN: 1, IN: 1, MA: 0 },
-}
-
-// ─── Force dynamic rendering ──────────────────────────────────────────────────
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 
-// ─── POST /api/analyze ────────────────────────────────────────────────────────
 export async function POST(request: NextRequest) {
+  // Rate limiting
+  const ip = getClientIp(request)
+  const rateCheck = checkRateLimit(ip)
+  if (!rateCheck.allowed) return rateLimitResponse()
+
   try {
-    const body = await request.json()
-    const {
-      imageMetadata = [],
-      language = "en",
-      seed = null,
-      preferences: userPreferences = {},
-      travelCompanion = null,
-    } = body
+    const raw = await request.json()
+    const parsed = parseBody(AnalyzeBodySchema, raw)
+    if (!parsed.ok) return parsed.response
 
-    const requestSeed = seed || generateSeed()
+    const { imageMetadata, language, seed, travelCompanion } = parsed.data
+    const requestSeed = seed ?? generateSeed()
 
-    console.log("[analyze] Request — seed:", requestSeed, {
-      metadataCount: imageMetadata.length,
-      language,
-      usingGemini: !!process.env.GEMINI_API_KEY,
-    })
+    // Extract image URLs only — templateTags and other static metadata are
+    // intentionally discarded. The raw image is the sole input to CLIP.
+    const imageUrls: string[] = imageMetadata.map((img) => img.url).filter(Boolean)
 
-    if (!Array.isArray(imageMetadata) || imageMetadata.length === 0) {
-      return NextResponse.json(
-        { error: "No image metadata provided" },
-        { status: 400 }
-      )
+    if (imageUrls.length === 0) {
+      return NextResponse.json({ error: "No image URLs found in metadata" }, { status: 400 })
     }
 
-    // ── Detect path: template-driven vs legacy image vision ───────────────────
-    const templateCount = imageMetadata.filter((img: any) => img.templateTags).length
-    const useTemplatePath = templateCount >= Math.ceil(imageMetadata.length / 2)
+    const squadType = (travelCompanion as "solo" | "couple" | "friends" | "family" | null) ?? undefined
 
-    let enrichedMetadata: ImageMetadata[]
-    let geminiResults: Array<GeminiImageAnalysis | null> = []
-    let geminiProfileInsight: Awaited<ReturnType<typeof analyzeProfileWithGemini>> = null
-
-    if (useTemplatePath) {
-      // ── Template path: accumulate scores from hidden metadata ───────────────
-      console.log("[analyze] Template path — scoring from metadata tags")
-
-      let scores = createEmptyScores()
-      for (const img of imageMetadata) {
-        if (img.templateTags) scores = accumulateScore(scores, img.templateTags)
-      }
-      const travelProfile = buildTravelProfile(scores, imageMetadata.length)
-
-      // Use Gemini for personalized reasoning text (profile summary, not images)
-      if (process.env.GEMINI_API_KEY) {
-        geminiProfileInsight = await analyzeProfileWithGemini(profileToPrompt(travelProfile))
-      }
-
-      // Convert template profile → ImageMetadata format expected by destination-matcher
-      enrichedMetadata = imageMetadata.map((img: any) => {
-        const tags = img.templateTags
-          ? [
-              img.templateTags.vibe,
-              img.templateTags.tripStyle,
-              img.templateTags.environment,
-              ...(img.templateTags.interests ?? []),
-            ]
-          : (img.tags ?? [])
-        return {
-          ...METADATA_DEFAULTS,
-          tags,
-          mood:           img.templateTags?.vibe     ?? img.mood     ?? "adventurous",
-          climate:        img.templateTags?.climate   ?? img.climate  ?? "temperate",
-          environment:    img.templateTags?.environment ?? img.environment ?? "nature",
-          activity_level: tripStyleToLevel(img.templateTags?.tripStyle) ?? img.activity_level ?? "medium",
-          food_style:     img.templateTags?.foodStyle ?? img.food_style ?? "local",
-        } satisfies ImageMetadata
-      })
-    } else {
-      // ── Legacy vision path: Gemini Vision on raw images ─────────────────────
-      const imageUrls: string[] = imageMetadata.map((img: any) => img.url).filter(Boolean)
-
-      if (process.env.GEMINI_API_KEY) {
-        console.log("[analyze] Gemini Vision on", imageUrls.length, "images")
-        geminiResults = await analyzeImagesWithGemini(imageUrls)
-      }
-
-      enrichedMetadata = await Promise.all(
-        imageMetadata.map(async (img: any, index: number) => {
-          const base: ImageMetadata = { ...METADATA_DEFAULTS, ...img, tags: img.tags ?? [] }
-
-          const gemini = geminiResults[index]
-          if (gemini) {
-            const mapped = geminiToImageMetadata(gemini)
-            return { ...base, ...mapped, tags: mapped.tags.length > 0 ? mapped.tags : base.tags }
-          }
-
-          if (img.url) {
-            const blip = await blipCaptionToMetadata(img.url)
-            if (blip) return { ...base, ...blip, tags: blip.tags?.length ? blip.tags : base.tags }
-          }
-
-          return base
-        })
-      )
-    }
-
-    // ── Step 3: Recommendation engine (100% code-based, no AI) ───────────────
-    const preferences = analyzePreferences(enrichedMetadata)
-    const profile = createPreferenceProfile(preferences)
-
-    const matchContext = {
-      budget:      userPreferences.budget as string | undefined,
-      travelDates: userPreferences.travelDates as { start: string; end: string } | undefined,
-    }
-
-    // Cache key: profile fingerprint + budget + travel month (season changes monthly)
-    const travelMonth = matchContext.travelDates?.start
-      ? new Date(matchContext.travelDates.start).getMonth()
-      : -1
-    const cacheKey = generateCacheKey(
-      profile.dominantMood,
-      profile.preferredClimate,
-      profile.preferredEnvironment,
-      profile.activityLevel,
-      matchContext.budget ?? "none",
-      String(travelMonth),
+    console.log(
+      `[Pipeline] Source=CLIP_ONLY | images=${imageUrls.length} | squad=${squadType ?? "none"} | seed=${requestSeed}`
     )
 
-    let topDestinations: DestinationMatch[] =
-      (destinationCache.get(cacheKey) as DestinationMatch[] | null) ??
-      getTopDestinations(profile, 10, matchContext)
-
-    if (!destinationCache.has(cacheKey)) {
-      destinationCache.set(cacheKey, topDestinations)
+    // ── CLIP is the SOLE recommendation engine — no template tags, no Gemini ──
+    let clipResult: Awaited<ReturnType<typeof rankDestinationsByCLIP>>
+    try {
+      clipResult = await rankDestinationsByCLIP(imageUrls.slice(0, 5), squadType)
+    } catch (clipErr) {
+      console.error("[Pipeline] CLIP analysis failed:", clipErr)
+      return NextResponse.json(
+        { error: "Image analysis failed — please try again" },
+        { status: 503 }
+      )
     }
 
-    topDestinations = shuffleArrayWithSeed(topDestinations, requestSeed) as DestinationMatch[]
+    // ── Phase 6: Final ranking log ────────────────────────────────────────────
+    console.log(
+      `[Ranking] Final scores: ` +
+      clipResult.ranked.slice(0, 8).map(r => `${r.id}=${r.score.toFixed(1)}`).join(" > ")
+    )
+    console.log(
+      `[Pipeline] Source=CLIP_ONLY complete | conf=${clipResult.confidence}% | ` +
+      `top3: ${clipResult.ranked.slice(0, 3).map((r, i) => `#${i + 1} ${r.name}(${r.score.toFixed(1)}%)`).join(" | ")}`
+    )
 
-    // Apply companion-type bonuses before final slice so ranking reflects them
-    if (travelCompanion && COMPANION_BONUS[travelCompanion]) {
-      const bonus = COMPANION_BONUS[travelCompanion]
-      topDestinations = topDestinations.map((dest) => ({
-        ...dest,
-        confidenceScore: Math.min(98, dest.confidenceScore + (bonus[dest.countryCode] ?? 0)),
+    const topDestinations = clipResult.ranked.slice(0, 3)
+
+    const countries = topDestinations.map((dest, index) => {
+      const exploreDest = EXPLORE_DESTINATIONS[dest.id]!
+      const travelEntry = DESTINATIONS.find(d => d.id === dest.id)
+      const matchPct    = Math.max(60, Math.min(97, Math.round(dest.score) - index * 2))
+      const topCity     = exploreDest.cities[0]
+      const hotels      = (travelEntry?.hotels ?? []).slice(0, 3).map(h => ({
+        name:           h.name,
+        style:          priceToStyle(h.priceLevel),
+        activity_level: "mixed",
       }))
-      topDestinations.sort((a, b) => b.confidenceScore - a.confidenceScore)
-    }
 
-    topDestinations = topDestinations.slice(0, 3)
+      // Explanation bullets come from the CLIP + reasoning engine
+      const positives = (dest as typeof dest & { explanation?: string[] }).explanation?.slice(0, 3) ?? []
+      if (positives.length === 0) {
+        positives.push(`Top AI-matched destination for ${clipResult.travelStyle} travel`)
+      }
 
-    const validatedDestinations = topDestinations.map((dest, index) => ({
-      ...dest,
-      confidenceScore: Math.max(60, Math.min(95, dest.confidenceScore + index * 2)),
-    }))
+      const negatives: string[] = []
+      if (exploreDest.scores.budget < 28)   negatives.push("Can be expensive for budget travellers")
+      if (exploreDest.scores.nightlife < 35) negatives.push("Quiet nightlife scene")
 
-    // ── Step 4: Destination images + enhanced details (parallel) ────────────
-    const topDestination = validatedDestinations[0]
-    const countryNames   = validatedDestinations.map(d => d.countryName)
+      // Confidence breakdown derived from actual CLIP score — NOT random
+      const s = dest.score
+      const confidenceBreakdown = {
+        activity: Math.round(60 + (s / 100) * 35),
+        climate:  Math.round(60 + (s / 100) * 32),
+        mood:     Math.round(60 + (s / 100) * 33),
+        food:     Math.round(60 + (s / 100) * 28),
+      }
 
-    const [destinationImages, selectedDestinationDetails] = await Promise.all([
-      // Fetch an Unsplash hero image for each of the 3 destinations
-      fetchCountryImages(countryNames).catch(e => {
-        console.error("[analyze] Destination image fetch error:", e)
-        return {} as Record<string, string>
-      }),
-      // City/holiday enrichment for the top destination
-      topDestination
-        ? getEnhancedDestinationDetails(
-            topDestination.countryCode,
-            profile,
-            userPreferences.budget || "medium",
-            userPreferences.travelDates
-          ).catch(e => { console.error("[analyze] Enhanced details error:", e); return null })
-        : Promise.resolve(null),
-    ])
+      return {
+        name:            dest.name,
+        code:            DEST_TO_ISO[dest.id] ?? "XX",
+        city:            topCity?.name ?? null,
+        matchPercentage: matchPct,
+        reason:          positives[0],
+        image:           dest.heroImage ?? null,
+        tags:            clipResult.vibes,
+        shortSummary:    topCity?.tagline ?? exploreDest.atmosphereTags.slice(0, 3).join(" · ") ?? "",
+        climate:         exploreDest.climates[0] ?? "temperate",
+        vibe:            clipResult.travelStyle,
+        confidenceBreakdown,
+        positives,
+        negatives,
+        activities:      exploreDest.activities ?? [],
+        foodHighlights:  (travelEntry?.restaurants ?? []).slice(0, 4).map(r => r.name),
+        hotels,
+      }
+    })
 
-    console.log("[analyze] Images fetched:", Object.keys(destinationImages).join(", "))
+    console.log(
+      `[Pipeline] FINAL destinations: ` +
+      countries.map((c, i) => `#${i + 1} ${c.name}(${c.matchPercentage}%)`).join(" | ")
+    )
 
-    // ── Step 5: Build response ────────────────────────────────────────────────
-    // geminiAnalysis is included so the client can save it to Firestore.
-    const response = {
+    return NextResponse.json({
       requestSeed,
-      // Echo travelCompanion so the results page can read it from sessionStorage
       travelCompanion,
       userProfile: {
-        dominantMood:         profile.dominantMood,
-        preferredClimate:     profile.preferredClimate,
-        preferredEnvironment: profile.preferredEnvironment,
-        activityLevel:        profile.activityLevel,
-        foodPreferences:      profile.foodPreferences,
+        dominantMood:         clipResult.travelStyle,
+        preferredClimate:     EXPLORE_DESTINATIONS[topDestinations[0]?.id]?.climates[0] ?? "temperate",
+        preferredEnvironment: EXPLORE_DESTINATIONS[topDestinations[0]?.id]?.environmentTypes[0] ?? "nature",
+        activityLevel:        "high",
+        foodPreferences:      EXPLORE_DESTINATIONS[topDestinations[0]?.id]?.activities.slice(0, 2) ?? [],
       },
-      // Per-image Gemini analysis (null entries = image analysis failed)
-      geminiAnalysis: geminiResults,
-      geminiProfileInsight,
-      selectedDestinationDetails,
-      countries: validatedDestinations.map((dest) => {
-        // Best-matching city for this destination (user profile + budget)
-        const bestCity =
-          getCityRecommendations(dest.countryCode, profile, matchContext.budget, 1)[0]?.city ??
-          null
-
-        return {
-          name: dest.countryName,
-          code: dest.countryCode,
-          city: bestCity,
-          matchPercentage: dest.confidenceScore,
-          reason: dest.positives[0] ?? `A great match for ${profile.dominantMood} travellers`,
-          // ── New multi-destination fields ──────────────────────────────────
-          image:        destinationImages[dest.countryName] ?? null,
-          tags:         profile.allTags,
-          shortSummary: buildCardSummary(dest, profile.dominantMood),
-          // ─────────────────────────────────────────────────────────────────
-          vibe: profile.dominantMood.charAt(0).toUpperCase() + profile.dominantMood.slice(1),
-          confidenceBreakdown: {
-            activity: dest.scoreBreakdown.activityScore,
-            climate:  dest.scoreBreakdown.climateScore,
-            mood:     dest.scoreBreakdown.moodScore,
-            food:     dest.scoreBreakdown.foodScore,
-          },
-          positives:      dest.positives,
-          negatives:      dest.negatives,
-          climate:        dest.climate,
-          activities:     dest.activities,
-          foodHighlights: dest.foodHighlights,
-          cities:         dest.cities ?? [],
-          hotels:         dest.hotels.map((h) => ({
-            name:           h.name,
-            style:          h.style,
-            activity_level: h.activity_level,
-          })),
-        }
-      }),
-      summary: generateSummary(validatedDestinations, language),
-    }
-
-    return NextResponse.json(response, {
-      headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-      },
+      geminiAnalysis:             null,
+      geminiProfileInsight:       null,
+      selectedDestinationDetails: null,
+      countries,
+      summary: buildSummary(countries, language ?? "en"),
+      engine: "clip",
+    }, {
+      headers: { "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0" },
     })
+
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error("[analyze] Unhandled error:", message, error)
-    return NextResponse.json(
-      { error: "Failed to analyze preferences", detail: message },
-      { status: 500 }
-    )
+    console.error("[Pipeline] Unhandled error:", message, error)
+    return NextResponse.json({ error: "Failed to analyze preferences", detail: message }, { status: 500 })
   }
 }

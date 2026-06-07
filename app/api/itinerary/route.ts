@@ -79,11 +79,11 @@ export async function POST(request: NextRequest) {
     // Places: Google → Foursquare → country-specific generated data (cascading fallbacks)
     const [hotels, restaurants, rawActivities] = await Promise.all([
       fetchGoogleHotels(city, budgetLevel)
-        .then(r => r.length > 0 ? r : fetchEnhancedHotels(countryCode, countryName, budgetLevel, city))
-        .catch(() => fetchEnhancedHotels(countryCode, countryName, budgetLevel, city).catch(() => [])),
+        .then(r => r.length > 0 ? r : fetchEnhancedHotels())
+        .catch(() => fetchEnhancedHotels().catch(() => [])),
       fetchGoogleRestaurants(city, budgetLevel)
-        .then(r => r.length > 0 ? r : fetchEnhancedRestaurants(countryCode, countryName, budgetLevel, city))
-        .catch(() => fetchEnhancedRestaurants(countryCode, countryName, budgetLevel, city).catch(() => [])),
+        .then(r => r.length > 0 ? r : fetchEnhancedRestaurants())
+        .catch(() => fetchEnhancedRestaurants().catch(() => [])),
       Promise.resolve(
         generateCountrySpecificActivities(countryName, preferenceCategories.length > 0 ? preferenceCategories : ['cultural', 'nature'])
       ),
