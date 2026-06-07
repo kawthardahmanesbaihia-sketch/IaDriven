@@ -1,28 +1,28 @@
 /**
- * Semantic CLIP Scoring Engine
+ * Semantic CLIP Scoring Engine — embedding-optimized build
  *
  * Pipeline per image:
- *   classifyImage(url, ALL_CONCEPT_LABELS)
- *     → per-label softmax scores
- *     → semantic category scoring (category-weighted aggregation)
- *     → contradiction detection (e.g. winter_arctic vs tropical_lush)
- *     → applyGeographicReasoning() (landmark + environment multipliers)
+ *   computeImageEmbedding(url)          ← one vision-encoder call, no text encoder
+ *   allPhraseScores(imageEmb)           ← vectorized batch dot-product (precomputed text matrix)
+ *   centroidRanking(imageEmb, TOP_K)    ← stage-1 coarse ranking (99 dot-products)
+ *   category-weighted scoring           ← stage-2 full scoring for top-K only
+ *   contradiction detection
+ *   applyGeographicReasoning()          ← landmark + environment multipliers
  *
  * Multi-image: scores accumulated with recency weighting, then normalised.
  *
- * Key upgrade over the previous system:
- *   Each destination's score is now the WEIGHTED SUM of per-category scores,
- *   where landmark matches (weight 3.5) dominate over generic matches (weight 1.0).
- *   This prevents a destination from winning purely on volume of generic phrases.
+ * Key performance properties:
+ *   - Text encoder runs ZERO TIMES during requests (precomputed at startup)
+ *   - Single vision-encoder call per image
+ *   - 5031-phrase similarity via one matrix multiply (~2ms)
+ *   - Category scoring only for top-20 candidate destinations
  */
 
-import { classifyImage, warmTextEmbeddings, type LabelScore } from "./clip-service"
+import { type LabelScore } from "./clip-service"
 import {
   DEST_CATEGORY_CONCEPTS,
   ALL_CONCEPT_LABELS,
   LABEL_TO_DEST,
-  LABEL_TO_CATEGORY,
-  DEST_PHRASE_COUNT,
   CATEGORY_WEIGHTS,
   CATEGORY_CONTRADICTIONS,
 } from "./destination-knowledge-base"
@@ -32,9 +32,34 @@ import {
   logReasoningDebug,
   type ReasoningResult,
 } from "./geo-reasoning-engine"
-import { getImageCacheStats } from "./performance-cache"
+import {
+  precomputeEmbeddings,
+  computeImageEmbedding,
+  allPhraseScores,
+  centroidRanking,
+  getPhraseList,
+  getPhraseIndex,
+  getEmbeddingStats,
+  isEmbeddingsReady,
+} from "./clip-embeddings"
 
-// ── Startup diagnostics ───────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const TOP_CENTROID_CANDIDATES = 20   // stage-1: keep this many destinations for full scoring
+
+// ── Flat dest-phrase map (built once at module load) ──────────────────────────
+// Used by precomputeEmbeddings to build per-destination phrase lists.
+
+const DEST_PHRASE_MAP: Record<string, string[]> = {}
+for (const [destId, categories] of Object.entries(DEST_CATEGORY_CONCEPTS)) {
+  const all: string[] = []
+  for (const phrases of Object.values(categories)) all.push(...phrases)
+  DEST_PHRASE_MAP[destId] = all
+}
+
+const ALL_DEST_IDS = Object.keys(DEST_CATEGORY_CONCEPTS)
+
+// ── Startup: trigger precomputation ──────────────────────────────────────────
 
 let _startupLogged = false
 
@@ -42,11 +67,10 @@ function logStartupDiagnostics(): void {
   if (_startupLogged) return
   _startupLogged = true
 
-  const destIds     = Object.keys(DEST_CATEGORY_CONCEPTS)
-  const totalPhrases= ALL_CONCEPT_LABELS.length
-  const destCount   = destIds.length
+  const totalPhrases = ALL_CONCEPT_LABELS.length
+  const destCount    = ALL_DEST_IDS.length
 
-  // Detect duplicate phrases (same phrase registered for more than one dest)
+  // Detect cross-destination duplicate phrases
   const seen = new Map<string, string>()
   let dupes = 0
   for (const phrase of ALL_CONCEPT_LABELS) {
@@ -56,17 +80,24 @@ function logStartupDiagnostics(): void {
 
   console.log(`\n${"═".repeat(60)}`)
   console.log(`[Performance] Knowledge Base`)
-  console.log(`  Destinations : ${destCount}`)
-  console.log(`  Total phrases: ${totalPhrases}`)
-  console.log(`  Phrase dupes : ${dupes}`)
-  console.log(`  Avg / dest   : ${(totalPhrases / Math.max(destCount, 1)).toFixed(1)}`)
-  console.log(`  Image cache  : max ${getImageCacheStats().maxSize} entries`)
+  console.log(`  Destinations   : ${destCount}`)
+  console.log(`  Total phrases  : ${totalPhrases}`)
+  console.log(`  Duplicate phrs : ${dupes}`)
+  console.log(`  Avg / dest     : ${(totalPhrases / Math.max(destCount, 1)).toFixed(1)}`)
+  console.log(`  Centroid cands : top-${TOP_CENTROID_CANDIDATES} per image`)
   console.log(`${"═".repeat(60)}\n`)
 }
 
+/**
+ * Trigger precomputation of all text embeddings + centroids.
+ * Called at process startup from route handlers.
+ * Safe to call multiple times — runs only once.
+ */
 export async function prewarmTextEmbeddings(): Promise<void> {
   logStartupDiagnostics()
-  await warmTextEmbeddings(ALL_CONCEPT_LABELS)
+  await precomputeEmbeddings(ALL_CONCEPT_LABELS, DEST_PHRASE_MAP)
+  const stats = getEmbeddingStats()
+  console.log(`[Performance] Embedding cache: ${stats.phraseCount} phrases, ${stats.centroidCount} centroids, ${stats.matrixMB.toFixed(1)} MB`)
 }
 
 // ── Squad bonus table ─────────────────────────────────────────────────────────
@@ -108,64 +139,87 @@ const SQUAD_BONUS: Record<string, Record<string, number>> = {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface CategoryScore {
-  category:   string
-  rawScore:   number   // mean phrase score for this category
-  weighted:   number   // rawScore × CATEGORY_WEIGHTS[category]
-  topPhrase:  string
+  category:       string
+  rawScore:       number
+  weighted:       number
+  topPhrase:      string
   topPhraseScore: number
 }
 
 interface PerImageScores {
-  destScores:          Record<string, number>
-  destCategoryScores:  Record<string, Record<string, CategoryScore>>
-  globalCategoryScores:Record<string, number>   // category → mean across all dests
-  activatedCategories: string[]                  // categories significantly above baseline
-  topLabels:           Record<string, string>
-  rawLabelScores:      LabelScore[]
-  imageUrl:            string
+  destScores:           Record<string, number>
+  destCategoryScores:   Record<string, Record<string, CategoryScore>>
+  globalCategoryScores: Record<string, number>
+  activatedCategories:  string[]
+  topLabels:            Record<string, string>
+  rawLabelScores:       LabelScore[]    // top-30 sorted, for geo-reasoning
+  imageUrl:             string
 }
 
 // ── Per-image semantic scoring ────────────────────────────────────────────────
 
 async function scoreOneImage(imageUrl: string): Promise<PerImageScores> {
-  const t0 = Date.now()
-  const labelScores: LabelScore[] = await classifyImage(imageUrl, ALL_CONCEPT_LABELS)
-  const tClassify = Date.now() - t0
-  console.log(`[CLIP] Classified ${labelScores.length} phrases in ${tClassify}ms — ${imageUrl.substring(0, 70)}`)
+  const tTotal = Date.now()
 
-  // Build O(1) score lookup
-  const tScore0 = Date.now()
-  const scoreMap: Record<string, number> = {}
-  for (const ls of labelScores) scoreMap[ls.label] = ls.score
+  // ── Image embedding (ONE vision-encoder call per image) ───────────────────
+  const imageEmb = await computeImageEmbedding(imageUrl)
 
-  // ── Stage 1: Coarse candidate selection via LABEL_TO_DEST ─────────────────
-  // Scan top-150 labels to find which destinations have relevant phrases.
-  // Non-candidate destinations (none of their phrases in top-150) score near-zero
-  // in practice and are safely approximated as 0.
-  const candidateSet = new Set<string>()
-  for (const ls of labelScores.slice(0, 150)) {
-    const d = LABEL_TO_DEST[ls.label]
-    if (d) candidateSet.add(d)
+  // ── Full phrase similarity (vectorized; no text-encoder calls) ────────────
+  const tSim = Date.now()
+  const phraseScores = allPhraseScores(imageEmb)  // Float32Array[N_phrases]
+  const phraseList   = getPhraseList()
+
+  // ── Build top-30 LabelScore[] for geo-reasoning ───────────────────────────
+  // Partial selection avoids allocating + sorting a full 5031-entry array.
+  const tGeo = Date.now()
+  const TOP_GEO = 30
+  const top30: LabelScore[] = []
+  // Scan once: maintain a min-score threshold so we collect top-30 efficiently
+  let minScore = -Infinity
+  for (let i = 0; i < phraseScores.length; i++) {
+    const s = phraseScores[i]
+    if (top30.length < TOP_GEO) {
+      top30.push({ label: phraseList[i], score: s })
+      if (top30.length === TOP_GEO) {
+        top30.sort((a, b) => a.score - b.score)   // ascending so [0] is min
+        minScore = top30[0].score
+      }
+    } else if (s > minScore) {
+      top30[0] = { label: phraseList[i], score: s }
+      // Sift up to maintain ascending sort
+      let j = 0
+      while (j + 1 < TOP_GEO && top30[j].score > top30[j + 1].score) {
+        const tmp = top30[j]; top30[j] = top30[j + 1]; top30[j + 1] = tmp
+        j++
+      }
+      minScore = top30[0].score
+    }
   }
-  // Always include every destination — fall through to full scoring.
-  // Destinations absent from top-150 will have a near-zero total anyway.
-  const allDestIds = Object.keys(DEST_CATEGORY_CONCEPTS)
+  top30.sort((a, b) => b.score - a.score)  // descending for geo-reasoning
+  console.log(`[Timing] Top-30 extraction: ${Date.now() - tGeo}ms`)
 
-  // ── Stage 2: Category-weighted scoring per destination ────────────────────
+  // ── Stage 1: Centroid ranking → candidate set ─────────────────────────────
+  const tCentroid = Date.now()
+  const topCandidates = centroidRanking(imageEmb, TOP_CENTROID_CANDIDATES)
+  const candidateSet  = new Set(topCandidates.map(c => c.destId))
+  console.log(`[Timing] Centroid ranking: ${Date.now() - tCentroid}ms | candidates: ${candidateSet.size}`)
+
+  // ── Stage 2: Category-weighted scoring (finalists only) ───────────────────
+  const tScore = Date.now()
   const destScores: Record<string, number> = {}
   const destCategoryScores: Record<string, Record<string, CategoryScore>> = {}
   const topLabels: Record<string, string> = {}
 
-  for (const destId of allDestIds) {
-    const categories = DEST_CATEGORY_CONCEPTS[destId]
-    // Fast path: skip full loop for non-candidates; assign 0
+  for (const destId of ALL_DEST_IDS) {
     if (!candidateSet.has(destId)) {
+      // Non-finalist: assign 0 (their centroid scored too low to matter)
       destScores[destId]         = 0
       destCategoryScores[destId] = {}
       topLabels[destId]          = ""
       continue
     }
 
+    const categories = DEST_CATEGORY_CONCEPTS[destId]
     let totalWeightedScore = 0
     const catScores: Record<string, CategoryScore> = {}
     let bestPhrase = ""
@@ -173,23 +227,23 @@ async function scoreOneImage(imageUrl: string): Promise<PerImageScores> {
 
     for (const [category, phrases] of Object.entries(categories)) {
       if (phrases.length === 0) continue
-      const weight   = CATEGORY_WEIGHTS[category] ?? 1.0
-      let sum        = 0
-      let catTop     = phrases[0]
-      let catTopScore= 0
+      const weight = CATEGORY_WEIGHTS[category] ?? 1.0
+      let sum = 0
+      let catTop      = phrases[0]
+      let catTopScore = 0
 
       for (const phrase of phrases) {
-        const s = scoreMap[phrase] ?? 0
+        // O(1) Float32Array index lookup — faster than HashMap
+        const idx = getPhraseIndex(phrase)
+        const s   = idx >= 0 ? phraseScores[idx] : 0
         sum += s
         if (s > catTopScore) { catTopScore = s; catTop = phrase }
       }
 
-      const rawScore   = sum / phrases.length
-      const weighted   = rawScore * weight
-
+      const rawScore = sum / phrases.length
+      const weighted = rawScore * weight
       catScores[category] = { category, rawScore, weighted, topPhrase: catTop, topPhraseScore: catTopScore }
       totalWeightedScore += weighted
-
       if (catTopScore > bestScore) { bestScore = catTopScore; bestPhrase = catTop }
     }
 
@@ -197,9 +251,9 @@ async function scoreOneImage(imageUrl: string): Promise<PerImageScores> {
     destCategoryScores[destId] = catScores
     topLabels[destId]          = bestPhrase
   }
-  console.log(`[Timing] Category scoring: ${Date.now() - tScore0}ms (${candidateSet.size}/${allDestIds.length} candidates)`)
+  console.log(`[Timing] Category scoring (${candidateSet.size}/${ALL_DEST_IDS.length} dests): ${Date.now() - tScore}ms`)
 
-  // ── Step 2: Global category scores (mean across all dests) ───────────────
+  // ── Global category scores (mean across candidate dests) ──────────────────
   const globalCategoryScores: Record<string, number> = {}
   const catAccum: Record<string, { sum: number; count: number }> = {}
 
@@ -214,10 +268,9 @@ async function scoreOneImage(imageUrl: string): Promise<PerImageScores> {
     globalCategoryScores[cat] = acc.count > 0 ? acc.sum / acc.count : 0
   }
 
-  // ── Step 3: Detect activated categories ──────────────────────────────────
-  // A category is "activated" if its global score is ≥ 1.8× the mean
-  const catValues  = Object.values(globalCategoryScores)
-  const catMean    = catValues.reduce((a, b) => a + b, 0) / Math.max(catValues.length, 1)
+  // ── Detect activated categories ───────────────────────────────────────────
+  const catValues = Object.values(globalCategoryScores)
+  const catMean   = catValues.reduce((a, b) => a + b, 0) / Math.max(catValues.length, 1)
   const ACTIVATION_THRESHOLD = catMean * 1.8
 
   const activatedCategories = Object.entries(globalCategoryScores)
@@ -225,45 +278,43 @@ async function scoreOneImage(imageUrl: string): Promise<PerImageScores> {
     .sort(([, a], [, b]) => b - a)
     .map(([cat]) => cat)
 
-  // ── Step 4: Contradiction suppression ────────────────────────────────────
+  // ── Contradiction suppression ─────────────────────────────────────────────
   const catRankMap: Record<string, number> = {}
   activatedCategories.forEach((cat, i) => { catRankMap[cat] = i })
 
   for (const contradiction of CATEGORY_CONTRADICTIONS) {
     const dominantRank = catRankMap[contradiction.dominant]
-    if (dominantRank === undefined) continue   // not activated
-    const isTopContradiction = dominantRank < 3  // top-3 categories only
+    if (dominantRank === undefined) continue
+    if (dominantRank >= 3) continue   // only top-3 categories trigger suppression
 
-    if (isTopContradiction) {
-      for (const incompatDest of contradiction.incompatible) {
-        if (destScores[incompatDest] !== undefined) {
-          const before = destScores[incompatDest]
-          destScores[incompatDest] *= contradiction.penaltyMultiplier
-          console.log(
-            `[Semantic] Contradiction: ${contradiction.dominant} activated → penalise ${incompatDest} ` +
-            `${before.toFixed(4)} → ${destScores[incompatDest].toFixed(4)}`
-          )
-        }
+    for (const incompatDest of contradiction.incompatible) {
+      if (destScores[incompatDest] !== undefined) {
+        const before = destScores[incompatDest]
+        destScores[incompatDest] *= contradiction.penaltyMultiplier
+        console.log(
+          `[Semantic] Contradiction: ${contradiction.dominant} → penalise ${incompatDest} ` +
+          `${before.toFixed(4)} → ${destScores[incompatDest].toFixed(4)}`
+        )
       }
     }
   }
 
-  // ── Structured semantic logs ──────────────────────────────────────────────
-  const top10Labels = labelScores.slice(0, 10)
-    .map(ls => `"${ls.label.substring(0, 45)}"(${ls.score.toFixed(4)})`)
-  console.log(`[CLIP] Top labels: ${top10Labels.join(" | ")}`)
+  // ── Structured logs ───────────────────────────────────────────────────────
+  const top10 = top30.slice(0, 10).map(ls => `"${ls.label.substring(0, 45)}"(${ls.score.toFixed(4)})`)
+  console.log(`[CLIP] Top-10: ${top10.join(" | ")}`)
 
   if (activatedCategories.length > 0) {
     const catLog = activatedCategories.slice(0, 6)
       .map(cat => `${cat}=${globalCategoryScores[cat].toFixed(5)}`)
-    console.log(`[Semantic] Activated categories: ${catLog.join(" | ")}`)
+    console.log(`[Semantic] Activated: ${catLog.join(" | ")}`)
   }
 
   const topDests = Object.entries(destScores)
     .sort(([, a], [, b]) => b - a)
     .slice(0, 5)
-    .map(([id, s]) => `${id}(${s.toFixed(4)},"${topLabels[id]?.substring(0, 35)}")`)
+    .map(([id, s]) => `${id}(${s.toFixed(4)},"${topLabels[id]?.substring(0, 30)}")`)
   console.log(`[CountryScores] Pre-reasoning top-5: ${topDests.join(" | ")}`)
+  console.log(`[Timing] scoreOneImage total: ${Date.now() - tTotal}ms`)
 
   return {
     destScores,
@@ -271,7 +322,7 @@ async function scoreOneImage(imageUrl: string): Promise<PerImageScores> {
     globalCategoryScores,
     activatedCategories,
     topLabels,
-    rawLabelScores: labelScores,
+    rawLabelScores: top30,
     imageUrl,
   }
 }
@@ -279,10 +330,9 @@ async function scoreOneImage(imageUrl: string): Promise<PerImageScores> {
 // ── Geographic reasoning ──────────────────────────────────────────────────────
 
 function applyReasoningToImage(pi: PerImageScores): ReasoningResult {
-  const destIds  = Object.keys(DEST_CATEGORY_CONCEPTS)
-  const reasoning = applyGeographicReasoning(pi.destScores, pi.rawLabelScores, destIds)
+  const reasoning = applyGeographicReasoning(pi.destScores, pi.rawLabelScores, ALL_DEST_IDS)
 
-  for (const destId of destIds) {
+  for (const destId of ALL_DEST_IDS) {
     pi.destScores[destId] = (pi.destScores[destId] ?? 0) * (reasoning.multipliers[destId] ?? 1.0)
   }
 
@@ -308,9 +358,7 @@ function aggregateScores(perImage: PerImageScores[]): Record<string, number> {
       totals[destId] = (totals[destId] ?? 0) + score * weight
     }
   }
-  for (const id of Object.keys(totals)) {
-    totals[id] /= totalWeight
-  }
+  for (const id of Object.keys(totals)) totals[id] /= totalWeight
   return totals
 }
 
@@ -337,7 +385,7 @@ function computeConfidence(ranked: { score: number }[]): number {
   return Math.round(Math.min(96, Math.max(55, top * 0.72 + gap * 0.5)))
 }
 
-// ── Explainable reasoning bullets ────────────────────────────────────────────
+// ── Explanation bullets ───────────────────────────────────────────────────────
 
 function buildExplanation(
   destId: string,
@@ -347,46 +395,36 @@ function buildExplanation(
   const dest    = EXPLORE_DESTINATIONS[destId]
   const bullets: string[] = []
 
-  // Landmark match
   for (const r of reasoningResults) {
     const lmMatch = r.debug.landmarkMatches.find(m => m.toLowerCase().includes(destId))
     if (lmMatch) {
-      const landmarkName = lmMatch.split(" (phrase:")[0]
-      bullets.push(`Landmark detected: ${landmarkName}`)
+      bullets.push(`Landmark detected: ${lmMatch.split(" (phrase:")[0]}`)
       break
     }
   }
 
-  // Best category activation
   const bestCatEntries: Array<{ category: string; score: number; phrase: string }> = []
   for (const pi of perImage) {
     const catMap = pi.destCategoryScores[destId]
     if (!catMap) continue
     for (const cs of Object.values(catMap)) {
-      if (cs.weighted > 0) {
-        bestCatEntries.push({ category: cs.category, score: cs.weighted, phrase: cs.topPhrase })
-      }
+      if (cs.weighted > 0) bestCatEntries.push({ category: cs.category, score: cs.weighted, phrase: cs.topPhrase })
     }
   }
   bestCatEntries.sort((a, b) => b.score - a.score)
 
   const topEntry = bestCatEntries[0]
   if (topEntry && bullets.length === 0) {
-    const catLabel = topEntry.category.replace(/_/g, " ")
-    bullets.push(`Strong visual match: ${catLabel} — "${topEntry.phrase}"`)
+    bullets.push(`Strong visual match: ${topEntry.category.replace(/_/g, " ")} — "${topEntry.phrase}"`)
   } else if (topEntry) {
-    const catLabel = topEntry.category.replace(/_/g, " ")
-    bullets.push(`Also matched: ${catLabel}`)
+    bullets.push(`Also matched: ${topEntry.category.replace(/_/g, " ")}`)
   }
 
-  // Second category
   const secondEntry = bestCatEntries.find(e => e.category !== topEntry?.category)
   if (secondEntry && bullets.length < 3) {
-    const catLabel = secondEntry.category.replace(/_/g, " ")
-    bullets.push(`Visual signal: ${catLabel}`)
+    bullets.push(`Visual signal: ${secondEntry.category.replace(/_/g, " ")}`)
   }
 
-  // Destination profile bullets
   if (dest) {
     if (dest.scores.nature > 88)   bullets.push(`${dest.name} offers world-class natural scenery`)
     if (dest.scores.cultural > 90) bullets.push(`Rich cultural heritage matches your selections`)
@@ -403,12 +441,9 @@ function buildExplanation(
 // ── Vibes extraction ──────────────────────────────────────────────────────────
 
 function extractVibes(perImage: PerImageScores[], topDestId: string): string[] {
-  // Use the top-activated semantic categories as vibes
   const catCount: Record<string, number> = {}
   for (const pi of perImage) {
-    for (const cat of pi.activatedCategories) {
-      catCount[cat] = (catCount[cat] ?? 0) + 1
-    }
+    for (const cat of pi.activatedCategories) catCount[cat] = (catCount[cat] ?? 0) + 1
   }
 
   const CATEGORY_TO_VIBE: Record<string, string> = {
@@ -443,7 +478,7 @@ function extractVibes(perImage: PerImageScores[], topDestId: string): string[] {
   return vibes
 }
 
-// ── Confidence debug log ──────────────────────────────────────────────────────
+// ── Confidence log ────────────────────────────────────────────────────────────
 
 function logConfidenceDebug(ranked: RankedDestination[], confidence: number): void {
   console.log(`\n[Confidence]`)
@@ -472,40 +507,44 @@ export async function rankDestinationsByCLIP(
   const urls = imageUrls.slice(0, 5).filter(Boolean)
   if (urls.length === 0) throw new Error("No image URLs provided")
 
-  // ── Score each image in parallel ──────────────────────────────────────────
+  if (!isEmbeddingsReady()) {
+    console.warn("[CLIP-scorer] Embeddings not yet ready — triggering precomputation inline…")
+    await prewarmTextEmbeddings()
+  }
+
+  // ── Score all images in parallel (vision encoder calls are independent) ────
   const tEmbed = Date.now()
   const perImageResults = await Promise.all(urls.map(scoreOneImage))
-  console.log(`[Timing] Image embedding + scoring (all ${urls.length} images parallel): ${Date.now() - tEmbed}ms`)
+  console.log(`[Timing] All images (parallel): ${Date.now() - tEmbed}ms`)
 
-  // ── Apply geographic reasoning per image ──────────────────────────────────
+  // ── Geographic reasoning ──────────────────────────────────────────────────
   const tReason = Date.now()
   const reasoningResults: ReasoningResult[] = perImageResults.map(pi => applyReasoningToImage(pi))
   logReasoningDebug(reasoningResults, urls.length)
-  console.log(`[Timing] Geographic reasoning: ${Date.now() - tReason}ms`)
+  console.log(`[Timing] Geographic reasoning total: ${Date.now() - tReason}ms`)
 
-  // ── Aggregate ──────────────────────────────────────────────────────────────
+  // ── Aggregate ─────────────────────────────────────────────────────────────
   const tAgg = Date.now()
   const aggregated = aggregateScores(perImageResults)
-
   console.log(`[Timing] Aggregation: ${Date.now() - tAgg}ms`)
 
   const topAgg = Object.entries(aggregated)
     .sort(([, a], [, b]) => b - a)
     .slice(0, 8)
     .map(([id, s]) => `${id}=${s.toFixed(5)}`)
-  console.log(`[CLIP-scorer] Aggregated (post-reasoning, top-8): ${topAgg.join(" | ")}`)
+  console.log(`[CLIP-scorer] Aggregated top-8: ${topAgg.join(" | ")}`)
 
-  // ── Normalise ──────────────────────────────────────────────────────────────
+  // ── Normalise ─────────────────────────────────────────────────────────────
   const normalised = normaliseScores(aggregated)
 
-  // ── Squad bonus ────────────────────────────────────────────────────────────
+  // ── Squad bonus ───────────────────────────────────────────────────────────
   if (squad && SQUAD_BONUS[squad]) {
     for (const destId of Object.keys(normalised)) {
       normalised[destId] += SQUAD_BONUS[squad][destId] ?? 0
     }
   }
 
-  // ── Build RankedDestination[] ─────────────────────────────────────────────
+  // ── Build final ranking ───────────────────────────────────────────────────
   const sortedIds = Object.entries(normalised)
     .sort(([, a], [, b]) => b - a)
     .map(([id]) => id)
@@ -516,7 +555,6 @@ export async function rankDestinationsByCLIP(
     if (!dest) return null as unknown as RankedDestination
 
     const explanation = buildExplanation(destId, perImageResults, reasoningResults)
-
     return {
       id:        dest.id,
       name:      dest.name,
@@ -548,8 +586,9 @@ export async function rankDestinationsByCLIP(
   logConfidenceDebug(ranked, confidence)
 
   const processingMs = Date.now() - t0
+  console.log(`[Timing] Total analysis: ${processingMs}ms`)
   console.log(
-    `[Pipeline] Source=CLIP_SEMANTIC | images=${urls.length} | ${processingMs}ms | conf=${confidence}% | ` +
+    `[Pipeline] Source=CLIP_EMBED | images=${urls.length} | ${processingMs}ms | conf=${confidence}% | ` +
     `top3: ${ranked.slice(0, 3).map((r, i) => `#${i + 1} ${r.name}(${r.score.toFixed(1)})`).join(" | ")}`
   )
 

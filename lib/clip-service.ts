@@ -1,25 +1,21 @@
 /**
- * CLIP Service — singleton model management for @xenova/transformers
+ * CLIP Service — model management + type exports
  *
- * Uses Xenova/clip-vit-base-patch32 (quantized ~87 MB).
- * Model is downloaded once, cached to .cache/transformers, and held in memory
- * for the lifetime of the Node.js process.
- *
- * Cross-modal note: Both text and image embeddings come out of CLIP's shared
- * 512-dim projection space, so cosine similarity between them is meaningful
- * (higher = image content matches that text description).
+ * The hot-path inference (classifyImage) has been replaced by clip-embeddings.ts
+ * which precomputes all text embeddings at startup and serves per-request similarity
+ * via a vectorized batch dot-product. This file is kept for:
+ *   1. LabelScore type (used by geo-reasoning-engine and clip-scorer)
+ *   2. prewarm() — triggers clip-embeddings model loading at startup
+ *   3. cosineSimilarity() utility for external callers
  */
 
-import { pipeline, env } from "@xenova/transformers"
-import { getCachedImageScores, setCachedImageScores } from "./performance-cache"
+import { env } from "@xenova/transformers"
+import { ensureModels } from "./clip-embeddings"
 
 // ── Model configuration ───────────────────────────────────────────────────────
 
 env.allowRemoteModels = true
-// Writable in dev; Vercel Lambda uses /tmp
 env.cacheDir = process.env.TRANSFORMERS_CACHE ?? "./.cache/transformers"
-
-const MODEL = "Xenova/clip-vit-base-patch32"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -28,116 +24,26 @@ export interface LabelScore {
   score: number
 }
 
-type ClassificationPipeline = (
-  image: string,
-  labels: string[],
-  options?: Record<string, unknown>
-) => Promise<LabelScore[]>
+// ── Startup warmup ────────────────────────────────────────────────────────────
 
-// ── Singleton state ───────────────────────────────────────────────────────────
+let _prewarmStarted = false
 
-let _classifier: ClassificationPipeline | null = null
-let _initPromise: Promise<ClassificationPipeline> | null = null
-
-function buildInitPromise(): Promise<ClassificationPipeline> {
-  console.log("[CLIP] Loading model — this may take a moment on first run…")
-  return pipeline("zero-shot-image-classification", MODEL, {
-    quantized: true,
-  } as Record<string, unknown>).then(p => {
-    console.log("[CLIP] Model ready")
-    _classifier = p as unknown as ClassificationPipeline
-    return _classifier
+/**
+ * Trigger model loading in the background before the first request.
+ * Delegates to clip-embeddings.ts which loads the separated text + vision
+ * encoders (more efficient than the zero-shot pipeline for our use case).
+ * Safe to call multiple times — only loads once.
+ */
+export function prewarm(): void {
+  if (_prewarmStarted) return
+  _prewarmStarted = true
+  ensureModels().catch(err => {
+    console.error("[CLIP] Pre-warm failed:", err)
+    _prewarmStarted = false
   })
 }
 
-export async function getClassifier(): Promise<ClassificationPipeline> {
-  if (_classifier) return _classifier
-  if (!_initPromise) _initPromise = buildInitPromise()
-  return _initPromise
-}
-
-/**
- * Start loading the model in the background so it's warm before the first
- * user request.  Safe to call multiple times — only loads once.
- */
-export function prewarm(): void {
-  if (!_classifier && !_initPromise) {
-    _initPromise = buildInitPromise().catch(err => {
-      console.error("[CLIP] Pre-warm failed:", err)
-      _initPromise = null
-      throw err
-    })
-  }
-}
-
-// ── Text-embedding cache ──────────────────────────────────────────────────────
-
-let _textEmbeddingsWarmed = false
-
-/**
- * Pre-compute text embeddings for all concept labels.
- * Call this once after prewarm() to eliminate the ~200-500ms penalty on the
- * first real inference request.  Subsequent requests reuse the internal cache.
- */
-export async function warmTextEmbeddings(labels: string[]): Promise<void> {
-  if (_textEmbeddingsWarmed) return
-  try {
-    const t0 = Date.now()
-    const clf = await getClassifier()
-    // 1×1 transparent GIF — minimal image, maximum label throughput
-    const TINY = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
-    await clf(TINY, labels)
-    _textEmbeddingsWarmed = true
-    console.log(`[CLIP] Text encoder warmed: ${labels.length} labels pre-computed in ${Date.now() - t0}ms`)
-  } catch (e) {
-    console.warn("[CLIP] Text embedding warmup skipped (will warm on first real request):", String(e))
-  }
-}
-
-// ── Image classification ──────────────────────────────────────────────────────
-
-/**
- * Run CLIP zero-shot classification for one image against a set of text labels.
- *
- * @param imageUrl  Publicly reachable URL (or data: URI).
- *                  Unsplash URLs are transformed to 336px thumbnails to speed
- *                  up download — CLIP resizes to 224px internally anyway.
- * @param labels    Text descriptions to score the image against.
- * @returns         Array sorted by score descending.
- */
-export async function classifyImage(
-  imageUrl: string,
-  labels: string[]
-): Promise<LabelScore[]> {
-  // Resize Unsplash source to 336px for fast download; CLIP will resize to 224px
-  const url = imageUrl.includes("unsplash.com")
-    ? imageUrl.replace(/[?&]w=\d+/, "").replace(/[?&]q=\d+/, "").replace(/\??$/, "?w=336&q=75")
-    : imageUrl
-
-  // Return cached result if this exact URL was already classified
-  const cached = getCachedImageScores(url)
-  if (cached) {
-    console.log(`[CLIP] Cache hit — skipping inference for ${url.substring(0, 70)}`)
-    return cached
-  }
-
-  const classifier = await getClassifier()
-  const tInfer = Date.now()
-  const results = await classifier(url, labels)
-  const sorted = Array.isArray(results) ? results : []
-  console.log(`[Timing] CLIP vision inference: ${Date.now() - tInfer}ms — ${url.substring(0, 70)}`)
-
-  // Store in cache for future requests
-  setCachedImageScores(url, sorted)
-
-  // Debug: log top-10 raw CLIP labels so we can see what the model "sees"
-  const top10 = sorted.slice(0, 10).map(l => `"${l.label}"=${l.score.toFixed(4)}`).join(", ")
-  console.log(`[CLIP-labels] Top-10 for ${url.substring(0, 70)}: ${top10}`)
-
-  return sorted
-}
-
-// ── Cosine similarity utility (for raw Float32Array embeddings if needed) ─────
+// ── Cosine similarity utility ─────────────────────────────────────────────────
 
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   let dot = 0, normA = 0, normB = 0
