@@ -11,6 +11,7 @@
  */
 
 import { pipeline, env } from "@xenova/transformers"
+import { getCachedImageScores, setCachedImageScores } from "./performance-cache"
 
 // ── Model configuration ───────────────────────────────────────────────────────
 
@@ -108,14 +109,26 @@ export async function classifyImage(
   imageUrl: string,
   labels: string[]
 ): Promise<LabelScore[]> {
-  const classifier = await getClassifier()
   // Resize Unsplash source to 336px for fast download; CLIP will resize to 224px
   const url = imageUrl.includes("unsplash.com")
     ? imageUrl.replace(/[?&]w=\d+/, "").replace(/[?&]q=\d+/, "").replace(/\??$/, "?w=336&q=75")
     : imageUrl
 
+  // Return cached result if this exact URL was already classified
+  const cached = getCachedImageScores(url)
+  if (cached) {
+    console.log(`[CLIP] Cache hit — skipping inference for ${url.substring(0, 70)}`)
+    return cached
+  }
+
+  const classifier = await getClassifier()
+  const tInfer = Date.now()
   const results = await classifier(url, labels)
   const sorted = Array.isArray(results) ? results : []
+  console.log(`[Timing] CLIP vision inference: ${Date.now() - tInfer}ms — ${url.substring(0, 70)}`)
+
+  // Store in cache for future requests
+  setCachedImageScores(url, sorted)
 
   // Debug: log top-10 raw CLIP labels so we can see what the model "sees"
   const top10 = sorted.slice(0, 10).map(l => `"${l.label}"=${l.score.toFixed(4)}`).join(", ")

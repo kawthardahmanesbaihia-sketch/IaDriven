@@ -32,8 +32,40 @@ import {
   logReasoningDebug,
   type ReasoningResult,
 } from "./geo-reasoning-engine"
+import { getImageCacheStats } from "./performance-cache"
+
+// ── Startup diagnostics ───────────────────────────────────────────────────────
+
+let _startupLogged = false
+
+function logStartupDiagnostics(): void {
+  if (_startupLogged) return
+  _startupLogged = true
+
+  const destIds     = Object.keys(DEST_CATEGORY_CONCEPTS)
+  const totalPhrases= ALL_CONCEPT_LABELS.length
+  const destCount   = destIds.length
+
+  // Detect duplicate phrases (same phrase registered for more than one dest)
+  const seen = new Map<string, string>()
+  let dupes = 0
+  for (const phrase of ALL_CONCEPT_LABELS) {
+    if (seen.has(phrase)) dupes++
+    else seen.set(phrase, LABEL_TO_DEST[phrase] ?? "?")
+  }
+
+  console.log(`\n${"═".repeat(60)}`)
+  console.log(`[Performance] Knowledge Base`)
+  console.log(`  Destinations : ${destCount}`)
+  console.log(`  Total phrases: ${totalPhrases}`)
+  console.log(`  Phrase dupes : ${dupes}`)
+  console.log(`  Avg / dest   : ${(totalPhrases / Math.max(destCount, 1)).toFixed(1)}`)
+  console.log(`  Image cache  : max ${getImageCacheStats().maxSize} entries`)
+  console.log(`${"═".repeat(60)}\n`)
+}
 
 export async function prewarmTextEmbeddings(): Promise<void> {
+  logStartupDiagnostics()
   await warmTextEmbeddings(ALL_CONCEPT_LABELS)
 }
 
@@ -98,18 +130,42 @@ interface PerImageScores {
 async function scoreOneImage(imageUrl: string): Promise<PerImageScores> {
   const t0 = Date.now()
   const labelScores: LabelScore[] = await classifyImage(imageUrl, ALL_CONCEPT_LABELS)
-  console.log(`[CLIP] Classified ${labelScores.length} phrases in ${Date.now() - t0}ms — ${imageUrl.substring(0, 70)}`)
+  const tClassify = Date.now() - t0
+  console.log(`[CLIP] Classified ${labelScores.length} phrases in ${tClassify}ms — ${imageUrl.substring(0, 70)}`)
 
   // Build O(1) score lookup
+  const tScore0 = Date.now()
   const scoreMap: Record<string, number> = {}
   for (const ls of labelScores) scoreMap[ls.label] = ls.score
 
-  // ── Step 1: Category-weighted scoring per destination ─────────────────────
+  // ── Stage 1: Coarse candidate selection via LABEL_TO_DEST ─────────────────
+  // Scan top-150 labels to find which destinations have relevant phrases.
+  // Non-candidate destinations (none of their phrases in top-150) score near-zero
+  // in practice and are safely approximated as 0.
+  const candidateSet = new Set<string>()
+  for (const ls of labelScores.slice(0, 150)) {
+    const d = LABEL_TO_DEST[ls.label]
+    if (d) candidateSet.add(d)
+  }
+  // Always include every destination — fall through to full scoring.
+  // Destinations absent from top-150 will have a near-zero total anyway.
+  const allDestIds = Object.keys(DEST_CATEGORY_CONCEPTS)
+
+  // ── Stage 2: Category-weighted scoring per destination ────────────────────
   const destScores: Record<string, number> = {}
   const destCategoryScores: Record<string, Record<string, CategoryScore>> = {}
   const topLabels: Record<string, string> = {}
 
-  for (const [destId, categories] of Object.entries(DEST_CATEGORY_CONCEPTS)) {
+  for (const destId of allDestIds) {
+    const categories = DEST_CATEGORY_CONCEPTS[destId]
+    // Fast path: skip full loop for non-candidates; assign 0
+    if (!candidateSet.has(destId)) {
+      destScores[destId]         = 0
+      destCategoryScores[destId] = {}
+      topLabels[destId]          = ""
+      continue
+    }
+
     let totalWeightedScore = 0
     const catScores: Record<string, CategoryScore> = {}
     let bestPhrase = ""
@@ -137,10 +193,11 @@ async function scoreOneImage(imageUrl: string): Promise<PerImageScores> {
       if (catTopScore > bestScore) { bestScore = catTopScore; bestPhrase = catTop }
     }
 
-    destScores[destId]        = totalWeightedScore
-    destCategoryScores[destId]= catScores
+    destScores[destId]         = totalWeightedScore
+    destCategoryScores[destId] = catScores
     topLabels[destId]          = bestPhrase
   }
+  console.log(`[Timing] Category scoring: ${Date.now() - tScore0}ms (${candidateSet.size}/${allDestIds.length} candidates)`)
 
   // ── Step 2: Global category scores (mean across all dests) ───────────────
   const globalCategoryScores: Record<string, number> = {}
@@ -416,14 +473,21 @@ export async function rankDestinationsByCLIP(
   if (urls.length === 0) throw new Error("No image URLs provided")
 
   // ── Score each image in parallel ──────────────────────────────────────────
+  const tEmbed = Date.now()
   const perImageResults = await Promise.all(urls.map(scoreOneImage))
+  console.log(`[Timing] Image embedding + scoring (all ${urls.length} images parallel): ${Date.now() - tEmbed}ms`)
 
   // ── Apply geographic reasoning per image ──────────────────────────────────
+  const tReason = Date.now()
   const reasoningResults: ReasoningResult[] = perImageResults.map(pi => applyReasoningToImage(pi))
   logReasoningDebug(reasoningResults, urls.length)
+  console.log(`[Timing] Geographic reasoning: ${Date.now() - tReason}ms`)
 
   // ── Aggregate ──────────────────────────────────────────────────────────────
+  const tAgg = Date.now()
   const aggregated = aggregateScores(perImageResults)
+
+  console.log(`[Timing] Aggregation: ${Date.now() - tAgg}ms`)
 
   const topAgg = Object.entries(aggregated)
     .sort(([, a], [, b]) => b - a)

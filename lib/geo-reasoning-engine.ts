@@ -1485,16 +1485,29 @@ const ENVIRONMENT_RULES: EnvironmentRule[] = [
   },
 ]
 
+// ── Precompiled keyword indices (built once at module load) ───────────────────
+// Avoids repeated .toLowerCase() calls on every rule/keyword during hot path.
+
+interface _CompiledKw { lower: string; ruleIdx: number }
+
+const _landmarkKws: _CompiledKw[] = []
+const _envKws: _CompiledKw[] = []
+
+for (let i = 0; i < LANDMARK_RULES.length; i++) {
+  for (const kw of LANDMARK_RULES[i].keywords) {
+    _landmarkKws.push({ lower: kw.toLowerCase(), ruleIdx: i })
+  }
+}
+for (let i = 0; i < ENVIRONMENT_RULES.length; i++) {
+  for (const kw of ENVIRONMENT_RULES[i].keywords) {
+    _envKws.push({ lower: kw.toLowerCase(), ruleIdx: i })
+  }
+}
+
 // ── Detection Helpers ─────────────────────────────────────────────────────────
 
 function topN(labelScores: LabelScore[], n: number): LabelScore[] {
-  // labelScores already sorted descending by score from classifyImage
   return labelScores.slice(0, n)
-}
-
-function labelContainsAny(label: string, keywords: string[]): boolean {
-  const lower = label.toLowerCase()
-  return keywords.some(k => lower.includes(k.toLowerCase()))
 }
 
 // ── Core Reasoning Function ────────────────────────────────────────────────────
@@ -1526,20 +1539,26 @@ export function applyGeographicReasoning(
   const top15 = topN(labelScores, 15)
   const top30 = topN(labelScores, 30)
 
-  // ── Step 1: Landmark Detection ─────────────────────────────────────────────
-  // Check top-15 phrases for high-confidence landmark matches.
-  // When a landmark is detected, apply exclusive boost + global reduction.
+  // ── Step 1: Landmark Detection (precompiled index) ─────────────────────────
+  // Scan top-15 labels once; for each label check all precompiled keywords.
+  // Avoids O(rules × labels × keywords) repeated toLowerCase() calls.
 
-  let landmarkApplied = false
+  const _triggeredLandmarks = new Map<number, LabelScore>()
+  for (const ls of top15) {
+    const lower = ls.label.toLowerCase()
+    for (const { lower: kw, ruleIdx } of _landmarkKws) {
+      if (!_triggeredLandmarks.has(ruleIdx) && lower.includes(kw)) {
+        _triggeredLandmarks.set(ruleIdx, ls)
+      }
+    }
+  }
 
-  for (const rule of LANDMARK_RULES) {
-    const matchingPhrase = top15.find(ls => labelContainsAny(ls.label, rule.keywords))
-    if (!matchingPhrase) continue
+  for (const [ruleIdx, matchingPhrase] of _triggeredLandmarks) {
+    const rule = LANDMARK_RULES[ruleIdx]
 
     debug.landmarkMatches.push(`${rule.name} (phrase: "${matchingPhrase.label.substring(0, 60)}", score: ${matchingPhrase.score.toFixed(4)})`)
     debug.lines.push(`[LANDMARK] ${rule.name} detected → boost ${rule.dests.join("+")} ×${rule.boostMultiplier}`)
 
-    // Boost matched destinations
     for (const dest of rule.dests) {
       if (multipliers[dest] !== undefined) {
         multipliers[dest] *= rule.boostMultiplier
@@ -1547,7 +1566,6 @@ export function applyGeographicReasoning(
       }
     }
 
-    // Reduce all other destinations
     if (rule.exclusive || rule.othersMultiplier < 0.5) {
       for (const dest of destIds) {
         if (!rule.dests.includes(dest)) {
@@ -1559,18 +1577,23 @@ export function applyGeographicReasoning(
       }
     }
 
-    landmarkApplied = true
-    // Don't break — multiple landmarks could coexist (e.g., aurora over Eiffel Tower is rare but handled)
   }
 
-  // ── Step 2: Environment Signal Detection ──────────────────────────────────
-  // Scan top-30 phrases for environment keywords.
-  // Apply boost/reduce rules for detected environments.
-  // Skip if a strong exclusive landmark was already applied (it dominates).
+  // ── Step 2: Environment Signal Detection (precompiled index) ──────────────
+  // Scan top-30 labels once against precompiled env keywords.
 
-  for (const rule of ENVIRONMENT_RULES) {
-    const matchingPhrase = top30.find(ls => labelContainsAny(ls.label, rule.keywords))
-    if (!matchingPhrase) continue
+  const _triggeredEnv = new Map<number, LabelScore>()
+  for (const ls of top30) {
+    const lower = ls.label.toLowerCase()
+    for (const { lower: kw, ruleIdx } of _envKws) {
+      if (!_triggeredEnv.has(ruleIdx) && lower.includes(kw)) {
+        _triggeredEnv.set(ruleIdx, ls)
+      }
+    }
+  }
+
+  for (const [ruleIdx, matchingPhrase] of _triggeredEnv) {
+    const rule = ENVIRONMENT_RULES[ruleIdx]
 
     debug.detectedSignals.push(rule.name)
     debug.lines.push(
