@@ -29,10 +29,33 @@ interface UnsplashPhoto {
   photographer: string
 }
 
+// ── Session-level cross-request deduplication ─────────────────────────────────
+// Prevents the same Unsplash image from appearing across refreshes or categories
+// within a 30-minute server process window.
+const _globalSeenIds   = new Set<string>()
+const SESSION_TTL_MS   = 30 * 60 * 1000   // 30 minutes
+const MAX_GLOBAL_IDS   = 600               // clear when too large to avoid unbounded growth
+let   _globalClearedAt = Date.now()
+
+function isGlobalDuplicate(id: string): boolean {
+  const now = Date.now()
+  if (_globalSeenIds.size >= MAX_GLOBAL_IDS || now - _globalClearedAt > SESSION_TTL_MS) {
+    _globalSeenIds.clear()
+    _globalClearedAt = now
+  }
+  if (_globalSeenIds.has(id)) return true
+  _globalSeenIds.add(id)
+  return false
+}
+
+// ── Distribution constants ────────────────────────────────────────────────────
+const DIVERSITY_QUERY_COUNT = 4    // Phase 1 parallel subqueries — reduced from 8 to halve burst
+const MAX_PER_QUERY         = 3    // hard cap per query — Phase 1 (reduced from 4)
+const MAX_TOPUP_PER_QUERY   = 2    // hard cap per query — Phase 2 top-up (reduced from 3)
+const MAX_PER_PHOTOGRAPHER  = 2    // photographer dedup — unchanged
+const EARLY_STOP_THRESHOLD  = 18   // stop once we have this many; 18 diverse > 24 repetitive/failed
+
 // ── Compatibility shim for AbortSignal.timeout ────────────────────────────────
-// AbortSignal.timeout() was added in Node.js 17.3.
-// We reproduce the same behaviour with AbortController + setTimeout so the
-// route works on every Node.js version Next.js supports (≥16).
 function makeTimeoutSignal(ms: number): { signal: AbortSignal; clear: () => void } {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ms)
@@ -43,11 +66,11 @@ function makeTimeoutSignal(ms: number): { signal: AbortSignal; clear: () => void
 async function fetchUnsplashBatch(
   query: string,
   accessKey: string,
-  perPage: number = 20
+  perPage: number = 12
 ): Promise<UnsplashPhoto[]> {
   const { signal, clear } = makeTimeoutSignal(8000)
   try {
-    const page = Math.floor(Math.random() * 3) + 1   // pages 1-3 (less rate-limit pressure)
+    const page = Math.floor(Math.random() * 3) + 1
     const url = [
       "https://api.unsplash.com/search/photos",
       `?query=${encodeURIComponent(query)}`,
@@ -58,7 +81,6 @@ async function fetchUnsplashBatch(
 
     const res = await fetch(url, {
       headers: {
-        // Canonical Unsplash auth — header is preferred over ?client_id query param
         Authorization: `Client-ID ${accessKey}`,
         "Accept-Version": "v1",
       },
@@ -67,7 +89,6 @@ async function fetchUnsplashBatch(
     })
 
     if (!res.ok) {
-      // Read the body so we can log the actual Unsplash error message
       let errBody = "(could not read body)"
       try { errBody = await res.text() } catch {}
       console.error(
@@ -78,8 +99,6 @@ async function fetchUnsplashBatch(
 
     const data = await res.json()
     const photos: any[] = data.results ?? []
-
-    console.log(`[image-templates] "${query}" → ${photos.length} results (page ${page})`)
 
     return photos.map((p: any) => ({
       id: p.id,
@@ -99,7 +118,6 @@ async function fetchUnsplashBatch(
 
 // ── Route handler ─────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
-  // Private server-only key (no NEXT_PUBLIC_ prefix — never sent to the browser)
   const accessKey = process.env.UNSPLASH_ACCESS_KEY
 
   if (!accessKey) {
@@ -110,11 +128,10 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  // Log first 8 chars so you can verify which key is active without exposing it
   console.log(`[image-templates] Using key: ${accessKey.slice(0, 8)}…`)
 
   const { searchParams } = req.nextUrl
-  const count = Math.min(parseInt(searchParams.get("count") ?? "10"), 30)
+  const count          = Math.min(parseInt(searchParams.get("count") ?? "10"), 30)
   const categoryFilter = searchParams.get("category") ?? ""
 
   const queryPool: CategoryQueryEntry[] =
@@ -124,63 +141,136 @@ export async function GET(req: NextRequest) {
     `[image-templates] category="${categoryFilter}" | target=${count} | pool=${queryPool.length} queries`
   )
 
-  const seenIds = new Set<string>()
+  const t0                = Date.now()
+  const seenIds           = new Set<string>()
+  const seenPhotographers = new Map<string, number>()
   const images: FetchedTemplateImage[] = []
+  const subqueriesUsed: string[]       = []
+  const perQueryCounts: Record<string, number> = {}
+  let   duplicatesRemoved = 0
+  let   requestsMade      = 0
+  let   requestsAvoided   = 0
+  let   topupTriggered    = false
+  let   earlyStop         = false
 
-  // Shuffle so each request draws from a random cross-section of subcategories
-  const shuffledPool = [...queryPool].sort(() => Math.random() - 0.5)
+  // Shuffle pool so each request draws a different cross-section of subcategories
+  const shuffled = [...queryPool].sort(() => Math.random() - 0.5)
 
-  for (const entry of shuffledPool) {
-    if (images.length >= count) break
+  // ── Phase 1: parallel fetch — first DIVERSITY_QUERY_COUNT subqueries ──────────
+  // All Phase 1 queries fire simultaneously; results are capped per query so no
+  // single subcategory can fill all slots.
+  const phase1Queries  = shuffled.slice(0, DIVERSITY_QUERY_COUNT)
+  const targetPerQuery = Math.min(MAX_PER_QUERY, Math.max(2, Math.ceil(EARLY_STOP_THRESHOLD / Math.max(phase1Queries.length, 1))))
+  const fetchPerPage   = Math.min(targetPerQuery + 4, 10)
+  requestsMade        += phase1Queries.length
 
-    const needed  = count - images.length
-    const perPage = Math.min(needed + 10, 20)
-    const batch   = await fetchUnsplashBatch(entry.query, accessKey, perPage)
+  const batchResults = await Promise.all(
+    phase1Queries.map(async (entry) => {
+      const photos = await fetchUnsplashBatch(entry.query, accessKey, fetchPerPage)
+      return { entry, photos }
+    })
+  )
 
+  for (const { entry, photos } of batchResults) {
+    if (images.length >= EARLY_STOP_THRESHOLD) { earlyStop = true; break }
     let added = 0
-    for (const photo of batch) {
-      if (images.length >= count) break
+    for (const photo of photos) {
+      if (images.length >= EARLY_STOP_THRESHOLD) break
+      if (added >= MAX_PER_QUERY) break
       if (!photo.regular) continue
-      if (seenIds.has(photo.id)) continue
+      if (seenIds.has(photo.id))                                               { duplicatesRemoved++; continue }
+      if (isGlobalDuplicate(photo.id))                                         { duplicatesRemoved++; continue }
+      const photographerCount = seenPhotographers.get(photo.photographer) ?? 0
+      if (photographerCount >= MAX_PER_PHOTOGRAPHER)                           { duplicatesRemoved++; continue }
 
       seenIds.add(photo.id)
+      seenPhotographers.set(photo.photographer, photographerCount + 1)
       images.push({
-        id: photo.id,
-        templateId: entry.id,
-        imageUrl: photo.regular,
-        thumbUrl: photo.thumb,
-        altDescription: photo.alt,
+        id:              photo.id,
+        templateId:      entry.id,
+        imageUrl:        photo.regular,
+        thumbUrl:        photo.thumb,
+        altDescription:  photo.alt,
         photographerName: photo.photographer,
-        tags: entry.tags,
-        query: entry.query,
+        tags:            entry.tags,
+        query:           entry.query,
       })
       added++
     }
-
-    console.log(
-      `[image-templates] "${entry.query}" → +${added} (${images.length}/${count} total)`
-    )
+    if (added > 0) {
+      subqueriesUsed.push(entry.id)
+      perQueryCounts[entry.id] = added
+    }
   }
 
-  // Final fallback — try generic queries if the category pool returned nothing
+  // ── Phase 2: sequential top-up — skipped entirely when EARLY_STOP_THRESHOLD met ─
+  // Avoids wasteful requests when Phase 1 already returned enough diverse images.
+  const phase2Queries = shuffled.slice(DIVERSITY_QUERY_COUNT)
+  if (images.length < EARLY_STOP_THRESHOLD) {
+    topupTriggered = true
+    for (let p2i = 0; p2i < phase2Queries.length; p2i++) {
+      if (images.length >= EARLY_STOP_THRESHOLD) {
+        earlyStop       = true
+        requestsAvoided += phase2Queries.length - p2i
+        break
+      }
+      const entry = phase2Queries[p2i]
+      requestsMade++
+      const quota = Math.min(MAX_TOPUP_PER_QUERY, EARLY_STOP_THRESHOLD - images.length)
+      const batch = await fetchUnsplashBatch(entry.query, accessKey, Math.min(quota + 3, 8))
+
+      let added = 0
+      for (const photo of batch) {
+        if (images.length >= EARLY_STOP_THRESHOLD || added >= quota) break
+        if (!photo.regular) continue
+        if (seenIds.has(photo.id))                                             { duplicatesRemoved++; continue }
+        if (isGlobalDuplicate(photo.id))                                       { duplicatesRemoved++; continue }
+        const photographerCount = seenPhotographers.get(photo.photographer) ?? 0
+        if (photographerCount >= MAX_PER_PHOTOGRAPHER)                         { duplicatesRemoved++; continue }
+
+        seenIds.add(photo.id)
+        seenPhotographers.set(photo.photographer, photographerCount + 1)
+        images.push({
+          id:              photo.id,
+          templateId:      entry.id,
+          imageUrl:        photo.regular,
+          thumbUrl:        photo.thumb,
+          altDescription:  photo.alt,
+          photographerName: photo.photographer,
+          tags:            entry.tags,
+          query:           entry.query,
+        })
+        added++
+      }
+      if (added > 0) {
+        subqueriesUsed.push(entry.id)
+        perQueryCounts[entry.id] = (perQueryCounts[entry.id] ?? 0) + added
+      }
+    }
+  } else {
+    requestsAvoided = phase2Queries.length
+  }
+
+  // ── Final fallback — category pool returned nothing ───────────────────────────
   if (images.length === 0 && queryPool !== FALLBACK_QUERIES) {
     console.warn("[image-templates] Category pool returned 0 results — trying fallback queries")
     for (const entry of FALLBACK_QUERIES) {
       if (images.length >= count) break
-      const batch = await fetchUnsplashBatch(entry.query, accessKey, 20)
+      const quota = Math.min(MAX_TOPUP_PER_QUERY, count - images.length)
+      const batch = await fetchUnsplashBatch(entry.query, accessKey, Math.min(quota + 5, 10))
       for (const photo of batch) {
         if (images.length >= count) break
-        if (!photo.regular || seenIds.has(photo.id)) continue
+        if (!photo.regular || seenIds.has(photo.id) || isGlobalDuplicate(photo.id)) continue
         seenIds.add(photo.id)
         images.push({
-          id: photo.id,
-          templateId: entry.id,
-          imageUrl: photo.regular,
-          thumbUrl: photo.thumb,
-          altDescription: photo.alt,
+          id:              photo.id,
+          templateId:      entry.id,
+          imageUrl:        photo.regular,
+          thumbUrl:        photo.thumb,
+          altDescription:  photo.alt,
           photographerName: photo.photographer,
-          tags: entry.tags,
-          query: entry.query,
+          tags:            entry.tags,
+          query:           entry.query,
         })
       }
     }
@@ -200,8 +290,21 @@ export async function GET(req: NextRequest) {
   images.sort(() => Math.random() - 0.5)
   const finalImages = images.slice(0, count)
 
+  // ── Diagnostics ───────────────────────────────────────────────────────────────
+  const distribution = Object.entries(perQueryCounts)
+    .map(([id, n]) => `${id}×${n}`)
+    .join(", ")
   console.log(
-    `[image-templates] Returning ${finalImages.length} images | ${seenIds.size} IDs seen | category="${categoryFilter}"`
+    `[ImagePipeline] Category: ${categoryFilter} | ` +
+    `Phase1 queries: ${phase1Queries.length} | ` +
+    `Topup triggered: ${topupTriggered} | ` +
+    `Early stop: ${earlyStop} | ` +
+    `Final image count: ${finalImages.length} | ` +
+    `Requests avoided: ${requestsAvoided} | ` +
+    `Total requests: ${requestsMade} | ` +
+    `Duplicates removed: ${duplicatesRemoved} | ` +
+    `Subqueries: ${distribution} | ` +
+    `Total time: ${Date.now() - t0}ms`
   )
 
   return NextResponse.json({ images: finalImages, total: finalImages.length })

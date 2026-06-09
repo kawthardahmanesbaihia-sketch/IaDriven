@@ -210,21 +210,49 @@ export async function precomputeEmbeddings(
 /**
  * Encode one image → normalized 512-dim embedding.
  * This is the ONLY model forward pass during a request.
+ *
+ * Supports two input shapes:
+ *   - https:// remote URLs  (existing /single flow via Unsplash)
+ *   - data:image/... URIs   (uploaded images from /explore)
+ *
+ * Only the image-load step differs between the two paths.
+ * The processor, vision model, normalization, and DIM slice are identical.
  */
 export async function computeImageEmbedding(imageUrl: string): Promise<Float32Array> {
   await ensureModels()
 
-  const url = imageUrl.includes("unsplash.com")
-    ? imageUrl.replace(/[?&]w=\d+/, "").replace(/[?&]q=\d+/, "").replace(/\??$/, "?w=336&q=75")
-    : imageUrl
+  const isDataUri = imageUrl.startsWith('data:image/')
+  console.log(`[CLIP] Input type: ${isDataUri ? 'base64-upload' : 'remote-url'}`)
 
-  const t0    = Date.now()
-  const image = await RawImage.fromURL(url)
+  const t0 = Date.now()
+  let image: Awaited<ReturnType<typeof RawImage.fromURL>>
+  let logLabel: string
+
+  if (isDataUri) {
+    // Format: "data:<mimeType>;base64,<b64data>"
+    // Buffer is a Node.js built-in; Blob is a global in Node.js 18+ (required by Next.js 13+).
+    const commaIdx = imageUrl.indexOf(',')
+    const mimeType = imageUrl.slice(5, commaIdx).split(';')[0]  // e.g. "image/jpeg"
+    const b64      = imageUrl.slice(commaIdx + 1)
+    const buffer   = Buffer.from(b64, 'base64')
+    console.log(`[CLIP] Decoded upload size: ${(buffer.byteLength / 1024).toFixed(1)} KB`)
+    const blob = new Blob([buffer], { type: mimeType })
+    image    = await RawImage.fromBlob(blob)
+    logLabel = '[base64-upload]'
+  } else {
+    const url = imageUrl.includes("unsplash.com")
+      ? imageUrl.replace(/[?&]w=\d+/, "").replace(/[?&]q=\d+/, "").replace(/\??$/, "?w=336&q=75")
+      : imageUrl
+    image    = await RawImage.fromURL(url)
+    logLabel = url.substring(0, 70)
+  }
+
   const inputs = await _processor(image)
   const { image_embeds } = await _visionModel(inputs) as { image_embeds: { data: Float32Array } }
   const raw = image_embeds.data.slice(0, DIM)
   const emb = l2normalize(raw)
-  console.log(`[Timing] Image embedding (vision encoder): ${Date.now() - t0}ms — ${url.substring(0, 70)}`)
+  console.log(`[CLIP] Embedding success`)
+  console.log(`[Timing] Image embedding (vision encoder): ${Date.now() - t0}ms — ${logLabel}`)
   return emb
 }
 

@@ -1,9 +1,35 @@
 import type { ImageTemplateTags } from "./image-templates"
 
+// ── Visual-diversity metadata types ───────────────────────────────────────────
+export type ClimateFamily =
+  | "warm_tropical"
+  | "warm_arid"
+  | "warm_mediterranean"
+  | "temperate_urban"
+  | "cold_nordic"
+  | "cold_arctic"
+  | "cold_alpine"
+  | "humid_jungle"
+  | "coastal_temperate"
+  | "volcanic_coastal"
+
+export type VisualPalette     = "cool" | "warm" | "vibrant" | "dark" | "neutral" | "pastel"
+export type VisualLighting    = "dramatic" | "golden_hour" | "soft" | "bright" | "night" | "moody"
+export type VisualComposition = "wide" | "cinematic" | "close" | "symmetrical" | "aerial" | "street_level"
+export type VisualEnergy      = "calm" | "intense" | "dynamic" | "balanced"
+export type VisualDensity     = "minimal" | "balanced" | "dense"
+
 export interface CategoryQueryEntry {
-  id: string
-  query: string
-  tags: ImageTemplateTags
+  id:             string
+  query:          string
+  tags:           ImageTemplateTags
+  subcategory?:   string
+  climateFamily?: ClimateFamily
+  palette?:       VisualPalette
+  lighting?:      VisualLighting
+  composition?:   VisualComposition
+  energy?:        VisualEnergy
+  density?:       VisualDensity
 }
 
 /**
@@ -189,21 +215,47 @@ export const CATEGORY_QUERY_POOLS: Record<string, CategoryQueryEntry[]> = {
 
 /**
  * Fallback queries used when category is unknown or all category queries fail.
+ * 8 entries ensure Phase 1 parallel fetch covers the full count with balanced distribution.
  */
 export const FALLBACK_QUERIES: CategoryQueryEntry[] = [
   {
-    id: "fallback_travel",
-    query: "travel vacation destination landscape scenic",
-    tags: { budget: "mid-range", travelers: "couple", interests: ["travel", "scenery"], tripStyle: "relaxed", climate: "temperate", foodStyle: "local", environment: "nature", vibe: "peaceful" },
+    id: "fallback_alpine",
+    query: "golden sunrise alpine peaks fog valley dramatic landscape",
+    tags: { budget: "mid-range", travelers: "couple", interests: ["scenery", "nature"], tripStyle: "relaxed", climate: "cold", foodStyle: "local", environment: "mountain", vibe: "peaceful" },
   },
   {
-    id: "fallback_adventure",
-    query: "adventure outdoor explore travel nature",
-    tags: { budget: "budget", travelers: "friends", interests: ["adventure", "nature"], tripStyle: "adventure", climate: "temperate", foodStyle: "local", environment: "nature", vibe: "adventurous" },
+    id: "fallback_coastal_village",
+    query: "colorful fishing village harbor boats Mediterranean cliffs",
+    tags: { budget: "mid-range", travelers: "couple", interests: ["culture", "scenery"], tripStyle: "relaxed", climate: "temperate", foodStyle: "seafood", environment: "beach", vibe: "peaceful" },
   },
   {
-    id: "fallback_beach",
-    query: "beach ocean tropical travel holiday",
+    id: "fallback_tropical_lagoon",
+    query: "turquoise lagoon palm island crystal clear water aerial view",
     tags: { budget: "mid-range", travelers: "couple", interests: ["beach", "relaxation"], tripStyle: "relaxed", climate: "tropical", foodStyle: "seafood", environment: "beach", vibe: "peaceful" },
+  },
+  {
+    id: "fallback_ruins",
+    query: "ancient temple ruins stone moss historic archaeology dramatic light",
+    tags: { budget: "budget", travelers: "solo", interests: ["history", "culture"], tripStyle: "cultural", climate: "temperate", foodStyle: "local", environment: "nature", vibe: "cultural" },
+  },
+  {
+    id: "fallback_safari",
+    query: "African savanna elephant wildlife golden hour grass sunset",
+    tags: { budget: "luxury", travelers: "family", interests: ["wildlife", "photography"], tripStyle: "adventure", climate: "desert", foodStyle: "local", environment: "nature", vibe: "adventurous" },
+  },
+  {
+    id: "fallback_street_market",
+    query: "vibrant street food market outdoor lanterns local culture spices",
+    tags: { budget: "budget", travelers: "friends", interests: ["food", "culture"], tripStyle: "foodie", climate: "tropical", foodStyle: "street-food", environment: "city", vibe: "social" },
+  },
+  {
+    id: "fallback_winter_village",
+    query: "snow-covered alpine village wooden chalets warm window glow winter",
+    tags: { budget: "mid-range", travelers: "couple", interests: ["scenery", "relaxation"], tripStyle: "relaxed", climate: "cold", foodStyle: "local", environment: "mountain", vibe: "romantic" },
+  },
+  {
+    id: "fallback_city_night",
+    query: "city skyline night reflection river bridge illuminated lights",
+    tags: { budget: "mid-range", travelers: "couple", interests: ["nightlife", "photography"], tripStyle: "cultural", climate: "temperate", foodStyle: "fine-dining", environment: "city", vibe: "social" },
   },
 ]

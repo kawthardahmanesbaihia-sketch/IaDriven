@@ -12,7 +12,9 @@ const squadEnum = z.enum(["solo", "couple", "friends", "family"]).optional().nul
 
 const imageUrlField = z
   .string()
-  .max(12_000, "Image URL or data URI is too long")
+  // 12_000 was too small for canvas-resized data URIs (800px JPEG ≈ 70k–160k chars).
+  // Unsplash URLs are ~200 chars; 1_500_000 safely covers all upload scenarios.
+  .max(1_500_000, "Image URL or data URI is too long")
   .refine(
     (u) =>
       u.startsWith("https://") ||

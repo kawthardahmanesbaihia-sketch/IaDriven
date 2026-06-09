@@ -2,32 +2,20 @@
 
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence, useMotionValue, useTransform } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
-  Upload, X, Wand2, Plane, Users, ChevronRight, ImagePlus,
-  Sparkles, RefreshCw, CheckCircle2, ArrowDown,
+  Upload, X, Wand2, ImagePlus, Sparkles, ArrowDown,
 } from "lucide-react";
 import { SQUAD_LABELS, type SquadType } from "@/lib/travel-data";
 
 // ── Types (unchanged) ─────────────────────────────────────────────────────────
 
-type FlowState = "upload" | "analyzing" | "matched";
+type FlowState = "upload" | "analyzing";
 
 interface UploadedImage {
   id: string;
   dataUrl: string;
   preview: string;
-}
-
-interface MatchResult {
-  destinationId: string;
-  destinationName: string;
-  heroImage: string;
-  flag: string;
-  confidence: number;
-  vibes: string[];
-  travelStyle: string;
-  ranked: Array<{ id: string; name: string; flag: string }>;
 }
 
 // ── Constants (unchanged) ─────────────────────────────────────────────────────
@@ -116,7 +104,6 @@ export default function ExplorePage() {
   const [squad, setSquad] = useState<SquadType | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [analyzeMsg, setAnalyzeMsg] = useState(0);
-  const [match, setMatch] = useState<MatchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // ── Handlers (logic unchanged) ───────────────────────────────────────────────
@@ -142,7 +129,8 @@ export default function ExplorePage() {
     addFiles(Array.from(e.dataTransfer.files));
   };
 
-  // Core analysis — accepts an explicit image list so it can be called after removal
+  // Core analysis — writes sessionStorage in the same format as /single, then
+  // navigates to /results so both entry points share the exact same results UX.
   const runAnalysis = useCallback(async (imgs: UploadedImage[]) => {
     if (!imgs.length || !squad) return;
     setError(null);
@@ -154,50 +142,41 @@ export default function ExplorePage() {
       setAnalyzeMsg(msgIdx);
     }, 1200);
     try {
+      const dataUrls = imgs.map(i => i.dataUrl);
+      console.log(
+        `[ExploreUpload] Files received: ${imgs.length} | ` +
+        `Payload built: ${dataUrls.length} data URI(s) | ` +
+        `Images sent to analyze: ${dataUrls.length} | ` +
+        `squad=${squad} | ` +
+        `avg URI length: ${Math.round(dataUrls.reduce((s, u) => s + u.length, 0) / dataUrls.length)} chars`
+      );
       const res = await fetch("/api/explore-analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ images: imgs.map(i => i.dataUrl), squad }),
+        body: JSON.stringify({ images: dataUrls, squad }),
       });
+      console.log(`[ExploreUpload] Analyze response status: ${res.status}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Analysis failed");
-      setMatch(data);
-      setFlowState("matched");
+
+      // Mirror exactly what /single does — /results reads these sessionStorage keys
+      sessionStorage.setItem("analysisResults", JSON.stringify({ ...data, seed: data.requestSeed ?? Date.now() }));
+      sessionStorage.setItem("selectedBudget", "medium");
+
+      router.push("/results");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setFlowState("upload");
     } finally {
       clearInterval(interval);
     }
-  }, [squad]);
+  }, [squad, router]);
 
   const handleAnalyze = () => runAnalysis(images);
 
-  // Removes an image; if already in matched state, re-analyzes the remainder automatically
   const removeImage = useCallback((id: string) => {
-    const remaining = images.filter(img => img.id !== id);
-    setImages(remaining);
-    if (flowState === "matched") {
-      if (remaining.length === 0) {
-        setFlowState("upload");
-        setMatch(null);
-      } else {
-        runAnalysis(remaining);
-      }
-    }
-  }, [images, flowState, runAnalysis]);
-
-  const handleExplore = () => {
-    if (!match || !squad) return;
-    router.push(`/explore/${match.destinationId}?squad=${squad}`);
-  };
-
-  const handleReset = () => {
-    setFlowState("upload");
-    setMatch(null);
-    setImages([]);
-    setError(null);
-  };
+    setImages(prev => prev.filter(img => img.id !== id));
+  }, []);
 
   const canDiscover = images.length > 0 && !!squad;
 
@@ -315,231 +294,7 @@ export default function ExplorePage() {
         )}
       </AnimatePresence>
 
-      {/* ════════════════════════════════════════════════════════════════════
-          MATCHED STATE
-      ════════════════════════════════════════════════════════════════════ */}
-      <AnimatePresence>
-        {flowState === "matched" && match && (
-          <motion.div
-            key="matched"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="min-h-screen"
-          >
-            {/* Cinematic hero */}
-            <div className="relative h-[70vh] overflow-hidden">
-              <motion.img
-                src={match.heroImage}
-                alt={match.destinationName}
-                className="w-full h-full object-cover"
-                initial={{ scale: 1.12 }}
-                animate={{ scale: 1 }}
-                transition={{ duration: 1.6, ease: [0.25, 0.46, 0.45, 0.94] }}
-              />
-              {/* Multi-layer overlay for depth */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
-              <div className="absolute inset-0 bg-gradient-to-r from-black/30 via-transparent to-transparent" />
 
-              {/* Top badges row */}
-              <div className="absolute top-6 left-6 right-6 flex items-center justify-between">
-                <motion.button
-                  initial={{ opacity: 0, x: -16 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.5 }}
-                  onClick={handleReset}
-                  className="flex items-center gap-2 bg-black/40 hover:bg-black/60 backdrop-blur-xl border border-white/15 text-white/80 hover:text-white px-4 py-2 rounded-full text-sm font-medium transition-all"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Try again
-                </motion.button>
-
-                <motion.div
-                  initial={{ opacity: 0, x: 16 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.5 }}
-                  className="flex items-center gap-2 bg-black/40 backdrop-blur-xl border border-emerald-500/30 text-white px-4 py-2 rounded-full text-sm font-semibold"
-                >
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  {match.confidence}% match
-                </motion.div>
-              </div>
-
-              {/* Destination title block */}
-              <div className="absolute bottom-0 left-0 right-0 px-6 md:px-12 pb-10">
-                <motion.div
-                  initial={{ opacity: 0, y: 32 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.3, duration: 0.8, ease: [0.25, 0.46, 0.45, 0.94] }}
-                >
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="h-px w-8 bg-emerald-400" />
-                    <span className="text-emerald-400 text-xs font-semibold tracking-[0.2em] uppercase">
-                      AI Destination Match
-                    </span>
-                  </div>
-                  <h1 className="text-5xl sm:text-7xl md:text-8xl font-black text-white tracking-tight leading-none mb-5">
-                    {match.flag} {match.destinationName}
-                  </h1>
-                  {/* Vibe tags */}
-                  <div className="flex flex-wrap gap-2">
-                    {match.vibes.slice(0, 5).map((vibe, i) => (
-                      <motion.span
-                        key={vibe}
-                        initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        transition={{ delay: 0.5 + i * 0.07 }}
-                        className="px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white text-xs font-medium capitalize tracking-wide"
-                      >
-                        {vibe}
-                      </motion.span>
-                    ))}
-                  </div>
-                </motion.div>
-              </div>
-            </div>
-
-            {/* Below-hero panel */}
-            <div className="relative bg-background">
-              {/* Glow bleed from hero */}
-              <div className="absolute -top-24 inset-x-0 h-24 bg-gradient-to-b from-black/60 to-transparent pointer-events-none" />
-
-              <div className="max-w-2xl mx-auto px-4 py-8 space-y-5">
-
-                {/* Runner-up chips */}
-                {match.ranked.length > 1 && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 16 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.5 }}
-                    className="flex items-center gap-3 flex-wrap"
-                  >
-                    <span className="text-xs text-muted-foreground font-medium tracking-wide uppercase shrink-0">
-                      Also considered
-                    </span>
-                    {match.ranked.slice(1).map((r) => (
-                      <motion.button
-                        key={r.id}
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.97 }}
-                        onClick={() => setMatch(prev => prev ? {
-                          ...prev,
-                          destinationId: r.id,
-                          destinationName: r.name,
-                          flag: r.flag,
-                          ranked: [r, ...prev.ranked.filter(x => x.id !== r.id)],
-                        } : prev)}
-                        className="px-3.5 py-1.5 rounded-full border border-border/80 bg-card hover:border-primary/50 hover:bg-primary/5 text-sm font-medium transition-all duration-200"
-                      >
-                        {r.flag} {r.name}
-                      </motion.button>
-                    ))}
-                  </motion.div>
-                )}
-
-                {/* Squad confirmation — glassmorphism card */}
-                <motion.div
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.6 }}
-                  className="rounded-2xl border border-border/60 bg-card/80 backdrop-blur-sm p-5 shadow-lg"
-                >
-                  <p className="text-xs text-muted-foreground font-semibold tracking-wider uppercase mb-4">
-                    Traveling as
-                  </p>
-                  <div className="grid grid-cols-4 gap-2">
-                    {SQUAD_OPTIONS.map((opt) => {
-                      const isActive = squad === opt.id;
-                      return (
-                        <motion.button
-                          key={opt.id}
-                          whileHover={{ scale: 1.04 }}
-                          whileTap={{ scale: 0.97 }}
-                          onClick={() => setSquad(opt.id)}
-                          className={`relative flex flex-col items-center gap-1.5 py-3.5 px-2 rounded-xl border-2 text-center transition-all duration-200 overflow-hidden ${
-                            isActive
-                              ? "border-primary/60 bg-primary/8 shadow-md shadow-primary/20"
-                              : "border-border/60 hover:border-primary/30 hover:bg-muted/30"
-                          }`}
-                        >
-                          <span className="text-2xl">{opt.emoji}</span>
-                          <span className={`text-xs font-bold ${isActive ? "text-primary" : "text-foreground"}`}>
-                            {opt.label}
-                          </span>
-                          {isActive && (
-                            <motion.div
-                              layoutId="squad-active-matched"
-                              className="absolute inset-0 bg-primary/5 rounded-xl"
-                              transition={{ type: "spring", bounce: 0.3, duration: 0.5 }}
-                            />
-                          )}
-                        </motion.button>
-                      );
-                    })}
-                  </div>
-                </motion.div>
-
-                {/* Uploaded images strip — with remove buttons that trigger re-analysis */}
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.7 }}
-                  className="flex gap-2.5 flex-wrap"
-                >
-                  <AnimatePresence mode="popLayout">
-                    {images.map((img, i) => (
-                      <motion.div
-                        key={img.id}
-                        layout
-                        initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.5, transition: { duration: 0.18, ease: "easeIn" } }}
-                        transition={{ delay: 0.7 + i * 0.06 }}
-                        className="relative w-16 h-16 rounded-xl overflow-hidden border border-border/60 shadow-md group flex-shrink-0"
-                      >
-                        <img src={img.preview} alt="" className="w-full h-full object-cover" />
-                        {/* Remove overlay — tap/hover to remove and re-analyze */}
-                        <motion.button
-                          whileHover={{ opacity: 1 }}
-                          whileTap={{ scale: 0.95 }}
-                          onClick={() => removeImage(img.id)}
-                          className="absolute inset-0 bg-black/55 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-                          title="Remove image"
-                        >
-                          <X className="w-4 h-4 text-white drop-shadow" />
-                        </motion.button>
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </motion.div>
-
-                {/* CTA buttons */}
-                <motion.div
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.78 }}
-                  className="flex gap-3"
-                >
-                  <motion.button
-                    whileHover={{ scale: 1.02, y: -1 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={handleExplore}
-                    disabled={!squad}
-                    className="flex-1 relative overflow-hidden bg-primary hover:bg-primary/90 disabled:opacity-40 text-primary-foreground font-bold py-4 px-6 rounded-2xl text-base flex items-center justify-center gap-3 shadow-xl shadow-primary/30 transition-all duration-300 group"
-                  >
-                    <motion.div
-                      className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
-                    />
-                    <Plane className="w-5 h-5 relative z-10" />
-                    <span className="relative z-10">Explore {match.destinationName}</span>
-                    <ChevronRight className="w-5 h-5 relative z-10 group-hover:translate-x-0.5 transition-transform" />
-                  </motion.button>
-                </motion.div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* ════════════════════════════════════════════════════════════════════
           UPLOAD STATE

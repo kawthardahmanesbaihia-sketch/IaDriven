@@ -223,11 +223,12 @@ export async function POST(request: NextRequest) {
         console.error("[destination] HotelBeds Hotels error:", e); return []
       }),
 
-      // 2 — Google Places Restaurants
+      // 2 — Google Places Restaurants (Places API New)
       fetchGoogleRestaurants(
         targetCity,
         budget,
-        cuisineHintFromPreferences(userPreferences, countryName)
+        cuisineHintFromPreferences(userPreferences, countryName),
+        countryName,
       ).catch((e) => {
         console.error("[destination] Google Places Restaurants error:", e); return []
       }),
